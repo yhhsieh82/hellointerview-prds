@@ -178,6 +178,7 @@ erDiagram
   updated_at: timestamp
 }
 ```
+**Phase 1 backend:** Implement this full User schema (no minimal subset); seed at least one test user for development and tests.
 
 #### QuestionMain
 ```typescript
@@ -297,16 +298,19 @@ CREATE TABLE practice_feedback_history AS SELECT * FROM practice_feedback WHERE 
 ## 5. API Base Configuration
 
 ### 5.1 Base URL
+All API paths are under the base path `/api/v1` (e.g. `GET /api/v1/practice-main`).
 ```
-Production: https://api.hellointerview.com/v1
-Development: http://localhost:8000/v1
+Production: https://api.hellointerview.com/api/v1
+Development: http://localhost:8080/api/v1
 ```
 
 ### 5.2 Authentication
-All endpoints require authentication via Bearer token:
+When authentication is implemented, all endpoints require authentication via Bearer token:
 ```
 Authorization: Bearer {jwt_token}
 ```
+
+**Until authentication is implemented:** Practice session endpoints (e.g. GET/POST/PATCH `/api/v1/practice-main`) MAY accept `user_id` in the request (query parameters for GET, request body for POST). Once JWT auth is in place, `user_id` is derived from the token and these parameters are deprecated or removed.
 
 ---
 

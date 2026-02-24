@@ -129,6 +129,8 @@ flowchart TD
 
 ## 5. API Endpoints
 
+**Phase 1 backend:** No JWT; `user_id` is supplied in the request (query for GET, body for POST). User entity and seed data per [Foundation PRD](00-foundation.md) §4.2 User and §5.2.
+
 ### 5.1 Get Active Practice Session
 
 ```
@@ -162,7 +164,8 @@ POST /api/v1/practice-main
 
 Request Body:
 {
-  "question_main_id": 1
+  "question_main_id": 1,
+  "user_id": 456
 }
 
 Response (201 Created):
@@ -174,6 +177,8 @@ Response (201 Created):
   "started_at": "2026-02-13T09:00:00Z"
 }
 ```
+
+*Until authentication is implemented, `user_id` is required in the request body. When JWT auth is in place, `user_id` will be derived from the token and may be omitted from the body.
 
 ### 5.3 Update Practice Session Status
 
