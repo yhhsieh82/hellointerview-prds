@@ -6,7 +6,7 @@
 
 ## 1. Feature Overview
 
-The Whiteboard & Diagramming feature provides an interactive canvas for users to practice system design problems. Users work through structured questions across five distinct whiteboard sections—Functional Requirements, Non-Functional Requirements, Entities, API, and High Level Design—each with identical diagramming capabilities. The interface supports blocks, text labels, arrows, connectors, zoom/pan, section focus management, and auto-save. All sections use Excalidraw-based canvases with content persisted as JSONB in the Practice model.
+The Whiteboard & Diagramming feature provides an interactive canvas for users to practice system design problems. Users work through structured questions across five distinct whiteboard sections—Functional Requirements, Non-Functional Requirements, Entities, API, and High Level Design—each with identical diagramming capabilities. The interface supports blocks, text labels, arrows, connectors, zoom/pan, section focus management, and auto-save. All sections use Excalidraw-based canvases with content persisted as JSONB on the `PracticeMain.whiteboard_content` field, which acts as the canonical whiteboard for the entire practice session.
 
 ---
 
@@ -62,8 +62,8 @@ The Whiteboard & Diagramming feature provides an interactive canvas for users to
 **Progress Indicators:**
 - Display one dot per question
 - Visual states:
-  - Blue filled: Has practice submission
-  - Grey filled: No submission
+  - Blue filled: Has at least one completed feedback attempt for this question in the current practice session (Practice + PracticeFeedback exist)
+  - Grey filled: No completed feedback attempt yet for this question in the current practice session
   - Grey outline: Currently selected
 - Hovering shows question name tooltip
 - Clicking navigates to that question
@@ -196,7 +196,7 @@ const questionTypeToSection = {
 **Priority:** P1 (Should Have)
 
 **Behavior:**
-- Auto-save whiteboard content every 5 seconds (debounced)
+- Auto-save session-level whiteboard content (`PracticeMain.whiteboard_content`) every 5 seconds (debounced)
 - Save triggered on:
   - Element creation
   - Element modification
@@ -205,11 +205,20 @@ const questionTypeToSection = {
 - Visual indicator: "Saving..." / "All changes saved"
 - No save on read-only sections
 
+### 3.6 Submission Semantics (V1)
+
+**Priority:** P1 (Should Have)
+
+**Behavior:**
+- There is at most one `Practice` record per question per `PracticeMain` in V1; repeated \"Get Feedback\" actions for the same question update the same logical attempt.
+- Clicking \"Get Feedback\" captures the current state of the canonical session-level whiteboard (`PracticeMain.whiteboard_content`) together with the active question context to create or update the per-question submission and its feedback.
+- Autosave operates only on `PracticeMain.whiteboard_content` and does not by itself create or update per-question `Practice` or `PracticeFeedback` records.
+
 ---
 
 ## 4. Whiteboard Content Structure
 
-The `whiteboard_content` field on Practice is stored as JSONB with the following structure:
+The `whiteboard_content` field on PracticeMain is stored as JSONB with the following structure and is shared across all questions in the session. Section editability is controlled by the current question type, but all sections are persisted together in one document:
 
 ```json
 {

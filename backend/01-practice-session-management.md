@@ -96,7 +96,7 @@ The typical frontend flow:
 
 ### 2.3 Query Parameters
 
-- **user_id** (number, required): User ID.
+- **user_id** (number, required in Phase 1): User ID. Until authentication is implemented, this is passed explicitly; once auth is in place, `user_id` will be derived from the access token and this parameter will be removed.
 - **question_main_id** (number, required): `QuestionMain` ID.
 - **status** (string, optional, default: `"practicing"`): Session status to search for (usually `"practicing"`).
 
@@ -202,7 +202,7 @@ Recommended frontend usage:
 ```
 
 - **question_main_id** (number, required): ID of the `QuestionMain` the user is practicing.
-- **user_id** (number, required): User ID.
+- **user_id** (number, required in Phase 1): User ID. This field is a temporary workaround before auth; once authentication is implemented, `user_id` will be derived from the access token and this field will be removed from the request body.
 
 ### 3.4 Responses
 

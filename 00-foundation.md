@@ -65,8 +65,8 @@ A comprehensive web application that enables users to practice system design pro
 ### Core Entities
 - **QuestionMain:** A complete system design challenge (e.g., "Design Twitter"). Contains multiple ordered questions and a sample answer write-up.
 - **Question:** An individual question within a QuestionMain (e.g., "Define functional requirements"). Questions are ordered and have specific types.
-- **PracticeMain:** A user's practice session on a specific QuestionMain. Tracks status (practicing or completed) and contains multiple practice answers.
-- **Practice:** A user's answer to a single question, consisting of whiteboard content (diagram elements) and optional audio recording.
+- **PracticeMain:** A user's practice session on a specific QuestionMain. Tracks status (practicing or completed) and owns the **canonical session-level whiteboard** (all sections 1–5) that is autosaved as the user works.
+- **Practice:** A user's answer to a single question within a PracticeMain. Represents a **per-question submission used for feedback and progress**, based on the current state of the PracticeMain whiteboard and optional audio recording.
 - **PracticeFeedback:** AI-generated evaluation and feedback for a specific practice submission.
 
 ### Question Types
@@ -145,13 +145,13 @@ erDiagram
         string status
         timestamp started_at
         timestamp completed_at
+        jsonb whiteboard_content
     }
     
     Practice {
         int practice_id PK
         int practice_main_id FK
         int question_id FK
-        jsonb whiteboard_content
         string audio_url
         timestamp submitted_at
         timestamp updated_at
@@ -216,6 +216,7 @@ erDiagram
   status: enum('practicing', 'completed') (default: 'practicing')
   started_at: timestamp
   completed_at: timestamp (nullable)
+  whiteboard_content: JSONB // Canonical whiteboard state for the entire practice session (sections 1–5)
 }
 ```
 
@@ -225,14 +226,15 @@ erDiagram
   practice_id: Integer (Primary Key, Auto-increment)
   practice_main_id: Integer (Foreign Key → PracticeMain)
   question_id: Integer (Foreign Key → Question)
-  whiteboard_content: JSONB // Diagram data for all 5 sections
   audio_url: string (nullable, max 500 chars) // S3 URL for audio recording
   submitted_at: timestamp
   updated_at: timestamp
 }
 ```
 
-**Whiteboard Content Structure:**
+In V1, `Practice` rows are created or updated when the user explicitly submits for feedback on a question (e.g., via a “Get Feedback” action). Autosave operates on the session-level `PracticeMain.whiteboard_content` and does not create or update `Practice` records on its own.
+
+**Whiteboard Content Structure (PracticeMain.whiteboard_content):**
 ```json
 {
   "section_1": {
@@ -328,7 +330,7 @@ Authorization: Bearer {jwt_token}
 **Database:**
 - PostgreSQL 14+ with JSONB support
 - Indexing on frequently queried fields (user_id, question_main_id, status)
-- JSONB GIN indexes for whiteboard_content queries
+- JSONB GIN indexes for `PracticeMain.whiteboard_content` queries
 
 **File Storage:**
 - Audio files: AWS S3 or equivalent
