@@ -4,8 +4,8 @@ This document specifies the backend APIs for the **Whiteboard & Diagramming** fe
 
 These APIs extend the existing Practice Session Management backend (`resource/prds/backend/01-practice-session-management.md`) to support:
 
-- **Loading** the canonical multi-section whiteboard for a practice session
-- **Autosaving** the full 5-section Excalidraw whiteboard (`PracticeMain.whiteboard_content`)
+- **Loading** the canonical whiteboard for a practice session (5-section document, merged into a single Excalidraw canvas on the frontend)
+- **Autosaving** the full 5-section whiteboard document (`PracticeMain.whiteboard_content`)
 - **Persisting the final whiteboard snapshot** when a session is completed
 
 All endpoints are versioned under `v1` and are served by the same Spring Boot service.
@@ -453,7 +453,7 @@ Accept: application/json
 - **Initial load**
   - Frontend:
     1. Calls `GET /api/v1/practice-main?user_id={userId}&question_main_id={questionMainId}`.
-    2. Uses `whiteboard_content` to hydrate all 5 Excalidraw instances.
+    2. Merges all 5 section element arrays from `whiteboard_content` into one flat list and passes it to the single Excalidraw canvas as `initialData`.
     3. Uses `GET /api/v1/question-mains/{id}` to load questions and their `whiteboard_section` values.
     4. Sets **section focus** based on the current question’s `whiteboard_section`.
 
