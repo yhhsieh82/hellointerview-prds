@@ -13,33 +13,33 @@
 
 The following feature PRDs extend this Foundation PRD:
 
-1. `01-practice-session-management.md` — Start/Resume practice, progress tracking
-2. `02-two-panel-interface.md` — Screen layout, left panel components, right panel whiteboard
-3. `03-whiteboard-interface.md` — Diagramming capabilities, section focus, zoom/pan, auto-save
-4. `04-audio-recording.md` — Recording interface, upload flow
-5. `05-practice-submission-feedback.md` — Submit practice, AI feedback generation, edit/resubmit
-6. `06-navigation-completion.md` — Next question, review page, history management
+1. `01-practice-session-management.md` — Start/resume practice, progress tracking
+2. `02-whiteboard-diagramming.md` — Screen layout, whiteboard, diagramming
+3. `03-audio-recording.md` — Speech capture, transcript persistence
+4. `04-ai-feedback-system.md` — Submit practice, AI feedback generation, edit/resubmit
+5. `05-review-history.md` — Review page, history management
+6. `06-ui-ux-design-system.md` — Shared UX and component specifications
 
 ---
 
 ## 1. Executive Summary
 
 ### 1.1 Product Overview
-A comprehensive web application that enables users to practice system design problems through an interactive whiteboard interface. Users work through structured questions covering functional requirements, non-functional requirements, entities, APIs, and high-level system design. The application provides AI-generated feedback on user submissions, supports audio recordings for design explanations, and tracks practice progress across multiple sessions.
+A comprehensive web application that enables users to practice system design problems through an interactive whiteboard interface. Users work through structured questions covering functional requirements, non-functional requirements, entities, APIs, and high-level system design. The application provides AI-generated feedback on user submissions, supports spoken explanation capture via frontend speech-to-text, and tracks practice progress across multiple sessions.
 
 ### 1.2 Business Objectives
 - Provide a structured platform for system design interview preparation
 - Enable users to practice through a guided, multi-section whiteboard approach
 - Deliver AI-powered feedback to help users improve their system design skills
 - Track user progress and allow session resumption
-- Support both visual diagramming and audio explanations
+- Support both visual diagramming and spoken explanations
 
 ### 1.3 Success Metrics
 - User engagement: Daily active users and session completion rate
 - Practice completion rate per QuestionMain
 - Average feedback score improvement over time
 - User retention rate (weekly/monthly)
-- Audio submission rate for applicable questions
+- Spoken explanation capture rate for applicable questions
 - Session resumption rate
 
 ---
@@ -66,7 +66,7 @@ A comprehensive web application that enables users to practice system design pro
 - **QuestionMain:** A complete system design challenge (e.g., "Design Twitter"). Contains multiple ordered questions and a sample answer write-up.
 - **Question:** An individual question within a QuestionMain (e.g., "Define functional requirements"). Questions are ordered and have specific types.
 - **PracticeMain:** A user's practice session on a specific QuestionMain. Tracks status (practicing or completed) and owns the **canonical session-level whiteboard** (all sections 1–5) that is autosaved as the user works.
-- **Practice:** A user's answer to a single question within a PracticeMain. Represents a **per-question submission used for feedback and progress**, based on the current state of the PracticeMain whiteboard and optional audio recording.
+- **Practice:** A user's answer to a single question within a PracticeMain. Represents a **per-question submission used for feedback and progress**, based on the current state of the PracticeMain whiteboard and optional spoken explanation transcript.
 - **PracticeFeedback:** AI-generated evaluation and feedback for a specific practice submission.
 
 ### Question Types
@@ -108,6 +108,7 @@ erDiagram
     QuestionMain ||--o{ PracticeMain : "practiced_by"
     PracticeMain ||--o{ Practice : contains
     Question ||--o{ Practice : "answered_in"
+    Practice ||--o{ PracticeTranscriptSegment : contains
     Practice ||--o| PracticeFeedback : receives
     
     User {
@@ -134,7 +135,7 @@ erDiagram
         string name
         text description
         int whiteboard_section
-        boolean requires_recording
+        boolean requires_spoken_explanation
         timestamp created_at
     }
     
@@ -152,9 +153,19 @@ erDiagram
         int practice_id PK
         int practice_main_id FK
         int question_id FK
-        string audio_url
+        text combined_transcript
+        int total_duration_seconds
         timestamp submitted_at
         timestamp updated_at
+    }
+
+    PracticeTranscriptSegment {
+        int practice_transcript_segment_id PK
+        int practice_id FK
+        int segment_order
+        text transcript_text
+        int duration_seconds
+        timestamp created_at
     }
     
     PracticeFeedback {
@@ -202,7 +213,7 @@ erDiagram
   name: string (required, max 200 chars)
   description: text (required)
   whiteboard_section: integer (1-5) // Which section this question uses
-  requires_recording: boolean (default: false) // True for High Level Design and Deep Dive
+  requires_spoken_explanation: boolean (default: false) // True for High Level Design and Deep Dive
   created_at: timestamp
 }
 ```
@@ -226,13 +237,26 @@ erDiagram
   practice_id: Integer (Primary Key, Auto-increment)
   practice_main_id: Integer (Foreign Key → PracticeMain)
   question_id: Integer (Foreign Key → Question)
-  audio_url: string (nullable, max 500 chars) // S3 URL for audio recording
+  combined_transcript: text (nullable) // Concatenated transcript across all saved segments for this answer
+  total_duration_seconds: integer (default: 0) // Sum of all saved transcript segment durations
   submitted_at: timestamp
   updated_at: timestamp
 }
 ```
 
-In V1, `Practice` rows are created or updated when the user explicitly submits for feedback on a question (e.g., via a “Get Feedback” action). Autosave operates on the session-level `PracticeMain.whiteboard_content` and does not create or update `Practice` records on its own.
+#### PracticeTranscriptSegment
+```typescript
+{
+  practice_transcript_segment_id: Integer (Primary Key, Auto-increment)
+  practice_id: Integer (Foreign Key -> Practice)
+  segment_order: integer (required) // 1-based append order for this practice
+  transcript_text: text (required)
+  duration_seconds: integer (required)
+  created_at: timestamp
+}
+```
+
+For questions that require spoken explanation, `Practice` rows MAY be created before final feedback submission so transcript segments can be persisted across browser sessions. For other question types, `Practice` rows are still created or updated on explicit submit. Autosave of diagram content continues to operate on `PracticeMain.whiteboard_content`.
 
 **Whiteboard Content Structure (PracticeMain.whiteboard_content):**
 ```json
@@ -322,7 +346,7 @@ Authorization: Bearer {jwt_token}
 - Page load time: < 2 seconds
 - Whiteboard rendering: < 500ms
 - Auto-save response: < 200ms
-- AI feedback generation: < 30 seconds (text-only), < 60 seconds (with audio)
+- AI feedback generation: < 30 seconds (text-only), < 45 seconds (with spoken explanation transcript)
 - API response time: < 500ms (excluding AI feedback)
 - Support for 1000 concurrent users
 
@@ -332,22 +356,16 @@ Authorization: Bearer {jwt_token}
 - Indexing on frequently queried fields (user_id, question_main_id, status)
 - JSONB GIN indexes for `PracticeMain.whiteboard_content` queries
 
-**File Storage:**
-- Audio files: AWS S3 or equivalent
-- Max file size: 50MB per audio
-- Retention: Active sessions indefinite, history 2 years
-- Encryption at rest
-
 **Data Volume Estimates:**
 - Avg whiteboard_content size: 50KB - 500KB
-- Avg audio file size: 2-5MB
+- Avg combined transcript size: 2KB - 20KB
 - Practices per user per month: 10-50
 
 ### 6.3 Security
 - Authentication: JWT tokens, expiry 24 hours
 - Authorization: Users can only access their own practices
 - HTTPS required for all connections
-- Audio upload: Signed S3 URLs, expiry 1 hour
+- Microphone and speech recognition permissions handled in browser
 - Input validation: All user inputs sanitized
 - Rate limiting: 100 requests/minute per user
 - XSS protection: Content Security Policy headers
@@ -357,7 +375,6 @@ Authorization: Bearer {jwt_token}
 - Horizontal scaling capability for API servers
 - Database read replicas for query load
 - CDN for static assets
-- S3 for distributed file storage
 - Background job queue for AI feedback generation
 - Caching: Redis for session data and frequently accessed QuestionMains
 
@@ -385,10 +402,10 @@ Authorization: Bearer {jwt_token}
 - Retry: 2 attempts with exponential backoff
 - Fallback: Queue for later processing if service unavailable
 
-**Audio Transcription:**
-- Service: OpenAI Whisper API or AWS Transcribe
+**Speech Capture:**
+- Provider: Browser speech recognition (`SpeechRecognition` / Web Speech API or equivalent)
 - Languages: English (initial), expand later
-- Timeout: 90 seconds
+- Constraint: Supported-browser detection and graceful fallback required
 
 **Cost Management:**
 - Token usage tracking per request
@@ -406,7 +423,7 @@ Authorization: Bearer {jwt_token}
 **Diagramming:** Excalidraw React components
 **Styling:** Tailwind CSS
 **HTTP Client:** Axios or Fetch API
-**Audio Recording:** MediaRecorder API
+**Speech Capture:** Browser speech recognition (`SpeechRecognition` / Web Speech API)
 **Build Tool:** Vite or Next.js bundler
 
 ### 7.2 Backend Stack
@@ -416,7 +433,6 @@ Authorization: Bearer {jwt_token}
 **Database:** PostgreSQL 14+ with JSONB
 **ORM:** Spring Data JPA (Hibernate)
 **Database Migration:** Flyway
-**File Storage:** AWS S3
 **Caching:** Redis
 **Background Jobs:** Spring @Async or Spring Batch
 **API Documentation:** OpenAPI/Swagger (SpringDoc)
@@ -424,7 +440,7 @@ Authorization: Bearer {jwt_token}
 
 ### 7.3 AI Integration
 **LLM Service:** OpenAI GPT-4 or Anthropic Claude 3 Opus
-**Transcription:** OpenAI Whisper API
+**Frontend Speech Capture:** Browser-native speech recognition or equivalent provider
 **Libraries:** 
 - Java: OpenAI Java SDK, HTTP clients (RestTemplate/WebClient) for API integration
 
@@ -432,7 +448,7 @@ Authorization: Bearer {jwt_token}
 **Hosting:** AWS, GCP, or Azure
 **Compute:** ECS/EKS, Cloud Run, or App Service
 **Database:** RDS PostgreSQL or Cloud SQL
-**Storage:** S3 or Cloud Storage
+**Storage:** Persistent relational storage for whiteboard content and transcript segments
 **CDN:** CloudFront or Cloud CDN
 **Monitoring:** DataDog, New Relic, or CloudWatch
 **Logging:** ELK Stack or Cloud Logging
@@ -445,7 +461,6 @@ Authorization: Bearer {jwt_token}
 ### 8.1 Data Security
 - All data encrypted at rest (AES-256)
 - All data encrypted in transit (TLS 1.3)
-- Audio files: Server-side encryption in S3
 - Database: Encrypted volumes
 - Secrets management: AWS Secrets Manager or similar
 
@@ -459,14 +474,14 @@ Authorization: Bearer {jwt_token}
 ### 8.3 Privacy
 - Users can only access their own practice data
 - No sharing of practice content with other users
-- Audio recordings not used for training AI models
+- Spoken transcripts not used for training AI models
 - PII protection: No personal data sent to LLM
 - GDPR compliance: Right to deletion, data export
 
 ### 8.4 Rate Limiting
 - API: 100 requests/minute per user
 - Feedback generation: 10 requests/hour per user
-- Audio upload: 5 uploads/hour per user
+- Transcript segment saves: 60 requests/hour per user
 - Bypass for premium users (future)
 
 ### 8.5 Audit Logging
@@ -503,7 +518,7 @@ Authorization: Bearer {jwt_token}
 
 ### 9.3 Feature Flags
 - Use feature flags for gradual rollout
-- Critical features: AI feedback, audio recording
+- Critical features: AI feedback, spoken explanation capture
 - A/B testing capability
 
 ### 9.4 Monitoring and Alerts
@@ -512,7 +527,7 @@ Authorization: Bearer {jwt_token}
 - Error rates by endpoint
 - AI feedback generation time
 - Database query performance
-- S3 upload success rate
+- Transcript segment save success rate
 - User session duration
 - Practice completion rate
 
@@ -564,13 +579,13 @@ Authorization: Bearer {jwt_token}
 - AWS/GCP/Azure account with appropriate permissions
 - OpenAI or Anthropic API access and budget
 - PostgreSQL database provisioning
-- S3 or equivalent object storage
 - Content team to create initial QuestionMains
 
 ### 11.2 Assumptions
 - Users have stable internet connectivity (min 5 Mbps)
 - Users have modern web browsers (last 2 versions)
-- Users have microphone access for audio recording
+- Users have microphone access for spoken explanation capture
+- Users use a browser that supports the chosen speech recognition approach for V1
 - Users understand basic system design concepts
 - English language only for V1
 - Desktop/laptop usage primarily (not mobile-first)

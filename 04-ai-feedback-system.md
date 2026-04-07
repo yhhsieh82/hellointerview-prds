@@ -13,12 +13,12 @@ See [Foundation PRD](00-foundation.md) for data models and infrastructure. Uses 
 
 ## 1. Feature Overview
 
-The AI Feedback System enables users to receive AI-generated evaluation and feedback on their system design practice submissions. When a user completes their whiteboard diagram (and optional audio recording for High Level Design and Deep Dive questions) and clicks "Get Feedback", the system:
+The AI Feedback System enables users to receive AI-generated evaluation and feedback on their system design practice submissions. When a user completes their whiteboard diagram (and spoken explanation transcript for High Level Design and Deep Dive questions) and clicks "Get Feedback", the system:
 
-1. Validates the submission (whiteboard content, audio when required)
+1. Validates the submission (whiteboard content, spoken explanation when required)
 2. Saves the practice to the backend
 3. Transforms diagram JSON to structured text for LLM consumption
-4. Constructs an evaluation prompt with question context, diagram description, and optional audio transcription
+4. Constructs an evaluation prompt with question context, diagram description, and combined spoken transcript
 5. Sends the prompt to an LLM API (OpenAI/Anthropic)
 6. Parses and stores the feedback
 7. Returns feedback to the frontend for display
@@ -33,12 +33,12 @@ The system supports edit-and-resubmit workflows: users can improve their answers
 **Priority:** P0 (Must Have)
 
 **User Story:**  
-As a user, when I click "Get Feedback", the system should save my whiteboard content and audio, then return AI-generated feedback.
+As a user, when I click "Get Feedback", the system should save my whiteboard content and spoken explanation transcript, then return AI-generated feedback.
 
 **Acceptance Criteria:**
 - Validation:
   - Whiteboard content must not be empty for active section
-  - Audio recording required for High Level Design/Deep Dive questions
+  - Spoken explanation required for High Level Design/Deep Dive questions
 - On click:
   - Show loading spinner
   - Submit practice data
@@ -57,7 +57,8 @@ POST /api/v1/practice
   "practice_main_id": 456,
   "question_id": 789,
   "whiteboard_content": { /* JSONB structure */ },
-  "audio_url": "https://s3.../recording.webm"
+  "combined_transcript": "I would start with a load balancer in front of stateless API servers...",
+  "total_duration_seconds": 180
 }
 ```
 
@@ -83,7 +84,7 @@ POST /api/v1/practice
 3. Construct LLM prompt with:
    - Question context
    - Diagram description
-   - Audio transcription (if provided)
+   - Combined spoken transcript (if provided)
    - Evaluation criteria
 4. Send to LLM API (OpenAI/Anthropic)
 5. Parse and store feedback
@@ -125,8 +126,8 @@ Question: {question_description}
 User's Diagram:
 {diagram_text_description}
 
-Audio Transcription (if provided):
-{audio_transcription}
+Spoken Explanation Transcript (if provided):
+{combined_transcript}
 
 Please provide constructive feedback covering:
 1. Completeness: Are all necessary components included?
@@ -140,7 +141,7 @@ Provide a score from 0-100 and detailed textual feedback.
 
 **Performance Requirements:**
 - Feedback generation time: < 30 seconds for text-only
-- Feedback generation time: < 60 seconds with audio transcription
+- Feedback generation time: < 45 seconds with spoken explanation transcript
 - Fallback if LLM service fails: "Feedback temporarily unavailable, please try again"
 
 ### 2.3 Edit and Resubmit
@@ -164,10 +165,10 @@ After receiving feedback, I want to improve my answer and get new feedback.
 ```mermaid
 flowchart TD
     Start[User on question page] --> Draw[User draws on whiteboard]
-    Draw --> Check{Question requires audio?}
-    Check -->|Yes| Record[User records audio]
+    Draw --> Check{Question requires spoken explanation?}
+    Check -->|Yes| Capture[User captures spoken explanation]
     Check -->|No| Submit[User clicks Get Feedback]
-    Record --> Submit
+    Capture --> Submit
     Submit --> Validate{Validation}
     Validate -->|Fail| Error[Show error message]
     Validate -->|Pass| Save[Save practice to backend]
@@ -200,7 +201,8 @@ Request Body:
     },
     ...
   },
-  "audio_url": "https://s3.amazonaws.com/..."
+  "combined_transcript": "I would start with...",
+  "total_duration_seconds": 180
 }
 
 Response (200 OK):
@@ -232,10 +234,10 @@ Error Responses:
 - Retry: 2 attempts with exponential backoff
 - Fallback: Queue for later processing if service unavailable
 
-**Audio Transcription:**
-- Service: OpenAI Whisper API or AWS Transcribe
+**Speech Transcript Input:**
+- Source: Persisted transcript segments combined on the `Practice`
 - Languages: English (initial), expand later
-- Timeout: 90 seconds
+- Constraint: Quality depends on frontend speech recognition accuracy
 
 **Cost Management:**
 - Token usage tracking per request
@@ -266,7 +268,7 @@ Error Responses:
 ## 7. Open Questions (AI Service)
 
 1. **AI Service Selection:** OpenAI GPT-4 vs Anthropic Claude 3? Cost-benefit analysis needed.
-2. **Audio Transcription:** Required for all audio submissions or optional for feedback quality?
+2. **Speech Transcript Quality:** Is browser speech recognition accuracy sufficient for all supported browsers in V1?
 3. **Feedback Scoring:** 0-100 numerical score required or optional? Display to user or internal only?
 
 ---
@@ -275,7 +277,7 @@ Error Responses:
 
 **Feedback Generation:**
 - 20. User submits practice → Feedback generated within 30 seconds
-- 21. User submits with audio → Feedback includes audio evaluation
+- 21. User submits with spoken explanation → Feedback incorporates transcript-based evaluation
 - 22. LLM service fails → Graceful error message, retry option
 - 23. User edits and resubmits → New feedback generated, old preserved in DB
 - 24. Feedback includes score → Score displayed prominently

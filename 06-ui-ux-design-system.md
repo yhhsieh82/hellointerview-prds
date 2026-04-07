@@ -84,7 +84,7 @@ This design system establishes the visual language, component specifications, an
 ### 3.5 Loading States
 - **Spinner:** Blue rotating circle
 - **Skeleton screens** for content loading
-- **Progress bar** for audio upload
+- **Progress indicator** for speech capture save state
 
 ---
 
@@ -155,16 +155,16 @@ This design system establishes the visual language, component specifications, an
 13. User on last question clicks "Complete" → Shows review page
 14. Progress dots update → Reflect answered vs unanswered questions
 
-**Audio Recording:**
-15. User records audio on High Level Design → Audio saves successfully
-16. User tries to submit without audio on Deep Dive → Blocked with error message
-17. Audio > 10 minutes → Recording stops, shows warning
-18. Audio file > 50MB → Upload fails with helpful error
-19. User re-records audio → Previous recording replaced
+**Speech Capture:**
+15. User speaks on High Level Design → Transcript segment saves successfully
+16. User tries to submit without speech on Deep Dive → Blocked with error message
+17. Total speaking duration > 10 minutes → Capture stops, shows warning
+18. User closes browser and returns → Saved transcript and total duration restore correctly
+19. User continues speaking after returning → New segment appends to the same answer
 
 **Feedback Generation:**
 20. User submits practice → Feedback generated within 30 seconds
-21. User submits with audio → Feedback includes audio evaluation
+21. User submits with spoken explanation → Feedback incorporates transcript-based evaluation
 22. LLM service fails → Graceful error message, retry option
 23. User edits and resubmits → New feedback generated, old preserved in DB
 24. Feedback includes score → Score displayed prominently
@@ -175,7 +175,7 @@ This design system establishes the visual language, component specifications, an
 27. Concurrent edits in different tabs → Last save wins, conflict warning
 28. Very long feedback text → Scrollable, properly formatted
 29. Empty whiteboard submission → Validation error
-30. Malformed audio file → Upload rejected with clear message
+30. Browser speech recognition unsupported → Clear guidance shown
 
 ### 7.2 Test Coverage Requirements
 - Unit tests: 80%+ coverage
@@ -206,9 +206,9 @@ This design system establishes the visual language, component specifications, an
 **Validation Errors:**
 - Display: Inline error messages below inputs
 - Examples:
-  - "Audio recording required for this question"
+  - "Spoken explanation is required for this question"
   - "Whiteboard cannot be empty"
-  - "Audio file too large (max 50MB)"
+  - "No transcript was captured. Please try again."
 
 **Server Errors (5xx):**
 - Display: "Something went wrong. Please try again."
@@ -228,8 +228,8 @@ This design system establishes the visual language, component specifications, an
   "error": "Validation failed",
   "details": [
     {
-      "field": "audio_url",
-      "message": "Audio recording is required for this question type"
+      "field": "combined_transcript",
+      "message": "Spoken explanation is required for this question type"
     }
   ]
 }

@@ -93,7 +93,7 @@ CREATE TABLE practice_feedback_history AS SELECT * FROM practice_feedback WHERE 
 
 The history tables mirror the structure of their active counterparts. Key fields preserved:
 - **PracticeMainHistory:** practice_main_id, user_id, question_main_id, status, started_at, completed_at
-- **PracticeHistory:** practice_id, practice_main_id, question_id, whiteboard_content, audio_url, submitted_at, updated_at
+- **PracticeHistory:** practice_id, practice_main_id, question_id, combined_transcript, total_duration_seconds, submitted_at, updated_at
 - **PracticeFeedbackHistory:** practice_feedback_id, practice_id, feedback_text, score, generated_at
 
 ### 4.3 Retention Policies
@@ -102,8 +102,8 @@ The history tables mirror the structure of their active counterparts. Key fields
 |-----------|-----------|-------|
 | Active sessions (practicing) | Indefinite | Until user completes or abandons |
 | History tables | 2 years | Completed sessions archived |
-| Audio files (active) | Indefinite | Linked to practicing sessions |
-| Audio files (history) | 2 years | Aligned with history retention |
+| Transcript segments (active) | Indefinite | Linked to practicing sessions and resumable answers |
+| Transcript segments (history) | 2 years | Aligned with history retention |
 | Audit logs | 90 days | Per security requirements |
 
 *Future consideration: Tier-based retention (e.g., free vs paid users) may be introduced.*

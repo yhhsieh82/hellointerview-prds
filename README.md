@@ -52,18 +52,19 @@ This directory contains the modular Product Requirements Documents (PRDs) for th
 ---
 
 #### **[03-audio-recording.md](03-audio-recording.md)**
-**Focus:** Audio recording and upload for design explanations
+**Focus:** Spoken explanation capture and transcript persistence for design explanations
 
 **Key Features:**
-- Browser-based audio recording (MediaRecorder API)
-- Recording states (idle, recording, recorded)
-- S3 upload integration
-- Format validation (WebM, MP4)
-- Size limits (50MB max, 10-minute max duration)
+- Browser-based speech capture with frontend speech-to-text
+- Capture states (idle, listening, saved/resumable)
+- Transcript segment persistence per `practice`
+- Stop and continue across browser sessions
+- Total captured duration display
+- 10-minute max cumulative speaking duration
 - Conditional visibility (High Level Design, Deep Dive only)
 
-**APIs:** Audio upload endpoint  
-**Dependencies:** Foundation PRD (S3 configuration)
+**APIs:** Transcript segment persistence endpoints  
+**Dependencies:** Foundation PRD
 
 ---
 
@@ -74,7 +75,7 @@ This directory contains the modular Product Requirements Documents (PRDs) for th
 - Practice submission validation
 - Diagram-to-text transformation
 - LLM integration (OpenAI GPT-4 / Anthropic Claude 3)
-- Audio transcription (Whisper API)
+- Transcript-based spoken explanation input
 - Feedback scoring and display
 - Edit and resubmit workflow
 - Rate limiting and cost management
