@@ -52,6 +52,7 @@ As a user answering High Level Design or Deep Dive questions, I want to speak my
 - API: Browser speech recognition (`SpeechRecognition` / Web Speech API or equivalent frontend speech-to-text provider)
 - Persisted artifact: transcript text plus duration metadata
 - Storage unit: ordered transcript segments per `practice`
+- `total_duration_seconds` and `combined_transcript` are derived from ordered transcript segments in V1, not persisted as dedicated aggregate columns
 - Language: English in V1
 - Raw audio file upload/storage: not supported in V1
 

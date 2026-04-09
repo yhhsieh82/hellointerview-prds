@@ -7,6 +7,7 @@ The core behavior is:
 - Users can **start/stop speaking multiple times** for a question.
 - Every Stop persists one ordered transcript segment.
 - Backend maintains a merged **`combined_transcript`** and cumulative **`total_duration_seconds`**.
+- In V1, **`combined_transcript`** and **`total_duration_seconds`** are derived values computed from ordered transcript segments, and are not stored as dedicated aggregate columns.
 - On Get Feedback, frontend sends the merged transcript into `POST /api/v1/practice`.
 
 All endpoints are versioned under `v1` and are served by the same Spring Boot service.
@@ -145,6 +146,8 @@ Prerequisite rule: `practice_id` is obtained by create-or-get practice **before 
 7. Rebuild `combined_transcript` by concatenating all segments in `segment_order`.
 8. Return `TranscriptSegmentSaveResponse`.
 
+Storage note: `total_duration_seconds` and `combined_transcript` are computed from persisted segment rows for the target `practice_id` (derived-on-read/response), not persisted as separate aggregate fields in V1.
+
 ### 3.6 Responses
 
 - **200 OK** — `TranscriptSegmentSaveResponse`.
@@ -218,6 +221,7 @@ Returns current speech capture state so the frontend can restore prior work and 
 
 - **transcript_segments** is ordered by `segment_order`.
 - `total_duration_seconds` and `combined_transcript` represent all persisted segments.
+- `total_duration_seconds` and `combined_transcript` are computed from `transcript_segments` and are not stored as dedicated aggregate columns in V1.
 
 ---
 
