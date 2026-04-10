@@ -1,6 +1,6 @@
 # PRD: Audio Recording
 
-**Version:** 2.0  
+**Version:** 2.1  
 **Date:** March 10, 2026  
 **Status:** Draft  
 
@@ -41,12 +41,14 @@ As a user answering High Level Design or Deep Dive questions, I want to speak my
   - Listening: Red dot, live timer, "Stop"
   - Saved: Checkmark, total captured duration, "Continue Speaking"
 - Browser microphone and speech recognition permissions requested on first use
-- Spoken explanation is required for submission on these question types
+- Spoken explanation is encouraged for these question types, but submission is not blocked if transcript is empty or missing
 - When the user clicks `Stop`, the frontend finalizes the current transcript segment and persists it to the related `practice`
 - When the user closes the browser and later returns to the same question, previously saved transcript segments are loaded and the user can continue speaking on the same `practice`
 - UI displays the total captured duration across all saved transcript segments for the current `practice`
 - V1 does not provide delete-recording or segment-removal controls; users can only add more speech and submit
+- UI shows a non-blocking warning when the current recording segment crosses 3 minutes
 - Max cumulative speaking duration: 10 minutes per `practice`
+- Frontend stops active recording when cumulative speaking duration reaches 10 minutes
 
 **Technical Specifications:**
 - API: Browser speech recognition (`SpeechRecognition` / Web Speech API or equivalent frontend speech-to-text provider)
@@ -65,6 +67,7 @@ As a user answering High Level Design or Deep Dive questions, I want to speak my
 5. Backend stores transcript_text, duration_seconds, segment_order
 6. Backend returns updated total_duration_seconds and transcript summary
 7. User later returns -> GET practice data includes saved transcript segments and total duration
+8. On Get Feedback (`POST /api/v1/practice`), backend computes merged transcript from stored transcript segments by `practice_id`
 ```
 
 ---
@@ -94,8 +97,9 @@ Response (200 OK):
 }
 
 Error Responses:
-- 400 Bad Request (empty transcript, duration exceeds max, invalid practice)
+- 400 Bad Request (empty transcript, duration exceeds max)
 - 403 Forbidden
+- 404 Not Found (invalid `practice_id`)
 - 500 Internal Server Error
 ```
 
@@ -133,16 +137,17 @@ Response excerpt:
 
 ### 4.1 Speech-Capture Error Scenarios
 
-**Validation Errors:**
+**Validation and UX Rules:**
 - Display: Inline error messages below inputs
 - Examples:
-  - "Spoken explanation is required for this question"
   - "Whiteboard cannot be empty"
   - "No transcript was captured. Please try again."
   - "Total speaking time cannot exceed 10 minutes"
+  - "Current segment has exceeded 3 minutes. Consider stopping and saving."
+- Submission is not blocked for empty or missing speech transcript in V1
 
 **Browser Capability Errors:**
-- If speech recognition is unavailable in the current browser, show a blocking message with supported-browser guidance
+- If speech recognition is unavailable in the current browser, show supported-browser guidance and allow user to continue without audio
 - If microphone permission is denied, show recovery instructions and allow retry
 
 **Backend 400 Bad Request (validation):**
@@ -151,8 +156,8 @@ Response excerpt:
   "error": "Validation failed",
   "details": [
     {
-      "field": "combined_transcript",
-      "message": "Spoken explanation is required for this question type"
+      "field": "transcript_text",
+      "message": "Transcript text cannot be empty"
     }
   ]
 }
@@ -164,11 +169,12 @@ Response excerpt:
 
 **Speech Capture:**
 - **15.** User speaks on High Level Design -> Transcript segment saves successfully
-- **16.** User tries to submit without speech on Deep Dive -> Blocked with error message
-- **17.** Total speaking duration exceeds 10 minutes -> Capture stops, shows warning
-- **18.** User stops speaking, closes browser, returns later -> Saved transcript and total duration are restored
-- **19.** User adds another speech segment -> Combined transcript and total duration update correctly
-- **20.** User cannot delete prior speech segments -> UI offers continue-only flow
+- **16.** User submits without speech on Deep Dive -> Submission succeeds, AI evaluates whiteboard-only input
+- **17.** Current segment crosses 3 minutes -> Non-blocking warning is shown
+- **18.** Total speaking duration reaches 10 minutes -> Capture stops, warning shown
+- **19.** User stops speaking, closes browser, returns later -> Saved transcript and total duration are restored
+- **20.** User adds another speech segment -> Combined transcript and total duration update correctly
+- **21.** User cannot delete prior speech segments -> UI offers continue-only flow
 
 **Edge Cases:**
 - **30.** Browser does not support speech recognition -> User sees clear guidance
@@ -189,11 +195,12 @@ Response excerpt:
 - **Saved:** Checkmark icon, total duration display, "Continue Speaking" label
 
 **Behavior:**
-- Required for submission on applicable question types
-- Get Feedback button disabled when spoken explanation is required but no saved transcript exists
+- Not required for submission in V1 on applicable question types
+- Get Feedback button is not disabled solely due to missing spoken transcript
 - Total captured duration is always visible after the first saved segment
 - Prior saved speech is presented as part of the current answer state
 - No delete or remove controls are shown for transcript segments in V1
+- Show non-blocking warning when current segment exceeds 3 minutes; auto-stop capture at 10 minutes cumulative duration
 
 **Design System Alignment:**
 - Follows standard button specifications (see Foundation PRD)

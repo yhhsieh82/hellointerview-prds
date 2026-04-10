@@ -15,7 +15,7 @@ See [Foundation PRD](00-foundation.md) for data models and infrastructure. Uses 
 
 The AI Feedback System enables users to receive AI-generated evaluation and feedback on their system design practice submissions. When a user completes their whiteboard diagram (and spoken explanation transcript for High Level Design and Deep Dive questions) and clicks "Get Feedback", the system:
 
-1. Validates the submission (whiteboard content, spoken explanation when required)
+1. Validates the submission (whiteboard content required; spoken explanation optional in V1)
 2. Saves the practice to the backend
 3. Transforms diagram JSON to structured text for LLM consumption
 4. Constructs an evaluation prompt with question context, diagram description, and combined spoken transcript
@@ -38,7 +38,7 @@ As a user, when I click "Get Feedback", the system should save my whiteboard con
 **Acceptance Criteria:**
 - Validation:
   - Whiteboard content must not be empty for active section
-  - Spoken explanation required for High Level Design/Deep Dive questions
+  - Spoken explanation is optional in V1 for High Level Design/Deep Dive questions
 - On click:
   - Show loading spinner
   - Submit practice data
@@ -56,9 +56,7 @@ POST /api/v1/practice
   "practice_id": 123 (if updating existing),
   "practice_main_id": 456,
   "question_id": 789,
-  "whiteboard_content": { /* JSONB structure */ },
-  "combined_transcript": "I would start with a load balancer in front of stateless API servers...",
-  "total_duration_seconds": 180
+  "whiteboard_content": { /* JSONB structure */ }
 }
 ```
 
@@ -84,7 +82,7 @@ POST /api/v1/practice
 3. Construct LLM prompt with:
    - Question context
    - Diagram description
-   - Combined spoken transcript (if provided)
+   - Combined spoken transcript (server-derived from persisted transcript segments when available)
    - Evaluation criteria
 4. Send to LLM API (OpenAI/Anthropic)
 5. Parse and store feedback
@@ -200,10 +198,12 @@ Request Body:
       "elements": [...]
     },
     ...
-  },
-  "combined_transcript": "I would start with...",
-  "total_duration_seconds": 180
+  }
 }
+
+Notes:
+- Client must not send `combined_transcript` or `total_duration_seconds` in this request.
+- Backend computes transcript aggregates from persisted transcript segments by `practice_id`.
 
 Response (200 OK):
 {
@@ -235,7 +235,7 @@ Error Responses:
 - Fallback: Queue for later processing if service unavailable
 
 **Speech Transcript Input:**
-- Source: Persisted transcript segments combined on the `Practice`
+- Source: Persisted transcript segments, combined server-side by `practice_id` during `POST /api/v1/practice`
 - Languages: English (initial), expand later
 - Constraint: Quality depends on frontend speech recognition accuracy
 
