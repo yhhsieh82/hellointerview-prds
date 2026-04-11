@@ -285,7 +285,27 @@ No transcript segment delete/edit is provided in V1; users only append and submi
 
 ---
 
-## 8. Summary
+## 8. Known issues
+
+### 8.1 Last transcript segment may be omitted if Get Feedback races segment save
+
+**Problem.** `POST /api/v1/practice` builds `combined_transcript` and `total_duration_seconds` from **persisted** transcript segments only. If the user triggers Get Feedback while the final `POST /api/v1/practice/{practice_id}/transcript-segments` is still in flight (or has not yet been sent after Stop), that last segment is not in storage yet and is **excluded** from AI evaluation. The user may see no error because V1 does not require a transcript to submit (see §7, item 10).
+
+**Why frontend-only gating is incomplete.** Disabling Get Feedback until the segment-save response returns reduces the race for the common single-tab flow but does not fully guarantee correctness under duplicate requests, retries, multiple tabs, or clock-skewed ordering; the durable guarantee belongs on the server if we need strict “all segments before feedback.”
+
+**Mitigations (non-exhaustive).**
+
+| Approach | Role | Notes |
+|----------|------|--------|
+| UX / client | Frontend | Do not enable Get Feedback until the latest segment upload completes successfully (after each Stop). Treat as best-effort reduction of the race, not a proof. |
+| API / server (future) | Backend | Introduce an explicit recording lifecycle (e.g. finalize or “ready for feedback” state) so feedback submission is rejected or deferred until the server has acknowledged all expected segments or the client has completed a finalize step. |
+| API / server (future) | Backend | Optional precondition on `POST /api/v1/practice` (e.g. expected last `segment_order` or version) to detect mismatch and return `409 Conflict` with a clear message. |
+
+This issue is **documented** for V1; resolving it fully may require contract changes beyond the current append-only segment + immediate feedback flow.
+
+---
+
+## 9. Summary
 
 - Supports multiple recording cycles per question via append-only transcript segments.
 - Maintains deterministic merged `combined_transcript` for AI feedback.
