@@ -18,7 +18,7 @@ Practice Session Management enables users to start, resume, and complete system 
 
 - **Foundation PRD:** Depends on PracticeMain, Practice, Question, and QuestionMain data models; user authentication
 - **Whiteboard PRD:** Session management loads and focuses the appropriate whiteboard section per question
-- **Practice Submission PRD:** Progress dots reflect which questions have practice submissions
+- **AI Feedback PRD ([04-ai-feedback-system.md](04-ai-feedback-system.md)):** Progress dots reflect which questions have **AI feedback** (at least one **`PracticeFeedback`** for that question in the current session); draft whiteboard, transcript segments, or a **`Practice` row alone** do not turn a dot blue. See that PRD §2.4 and this document §3.1.2.
 - **Review PRD:** Completion flow navigates to the review page; full review details are specified in the Review PRD
 
 ---

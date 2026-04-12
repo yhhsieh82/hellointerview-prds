@@ -27,6 +27,8 @@ The system supports edit-and-resubmit workflows: users can improve their answers
 
 **Data model note:** Resubmit uses the **same canonical `practice_id`** per `(practice_main_id, question_id)` for that session. Multiple submissions do **not** create multiple active **`Practice`** rows for the same question in the same session; history is carried by **`PracticeFeedback`** (and optional history tables). See Foundation PRD and Practice Session Management backend PRD for the unique constraint on `Practice`.
 
+**Progress and transcript (this PRD):** How **session progress indicators** (progress dots) relate to **`PracticeFeedback`** versus draft work is defined in **§2.4**. How **spoken transcript** is derived and passed into the LLM is defined in **§2.5**.
+
 ---
 
 ## 2. Practice Submission and Feedback
@@ -84,7 +86,7 @@ POST /api/v1/practice
 3. Construct LLM prompt with:
    - Question context
    - Diagram description
-   - Combined spoken transcript (server-derived from persisted transcript segments when available)
+   - Combined spoken transcript (server-derived from persisted transcript segments—see **§2.5**)
    - Evaluation criteria
 4. Send to LLM API (OpenAI/Anthropic)
 5. Parse and store feedback
@@ -158,6 +160,39 @@ After receiving feedback, I want to improve my answer and get new feedback.
 - Feedback history preserved in database
 - UI shows latest feedback only
 
+### 2.4 Session progress and `PracticeFeedback`
+
+This subsection ties **Get Feedback** to **session chrome** (progress dots) and the **`GET /api/v1/practice-main`** contract. Full UX copy lives in [Practice Session Management](01-practice-session-management.md) §3.1.2; API field semantics in [Practice Session Management – Backend](backend/01-practice-session-management.md) §1.1.
+
+**Definition:** For an active practicing session, a question **counts toward progress** (blue progress dot) when there exists at least one **`PracticeFeedback`** row whose **`practice_id`** belongs to a **`Practice`** row with this **`practice_main_id`** and that **`question_id`**. The active session response exposes this as **`question_ids_with_feedback`**: distinct **`question_id`** values satisfying the above.
+
+**Not sufficient for progress (grey dot unchanged):**
+
+- Idempotent **create-or-get `Practice`** for a question (e.g. to obtain **`practice_id`** for transcript segment uploads)
+- Persisted **`PracticeTranscriptSegment`** rows alone
+- **`PracticeMain.whiteboard_content`** autosave alone
+
+**Sufficient event:** A successful **Get Feedback** flow (this PRD’s submit path) that **persists at least one `PracticeFeedback`** row for that question’s **`practice_id`**.
+
+**Resubmits:** The client reuses the same canonical **`practice_id`**. Each successful feedback run **appends** a new **`PracticeFeedback`** row. **`question_ids_with_feedback`** remains a set of distinct question IDs—the question stays listed once even after multiple feedback generations.
+
+**Cross-references:** [Audio Recording](03-audio-recording.md) defines segment storage and upload APIs only; it does **not** define progress dots. Progress dots follow **`question_ids_with_feedback`**, not **`Practice` row existence alone** (see [Audio Recording – Backend](backend/03-audio-recording.md) where applicable).
+
+**Backend alignment:** Introducing the active **`practice_feedback`** table (per [Foundation](00-foundation.md)), returning **`question_ids_with_feedback`** on **GET practice-main** (replacing any interim **`question_ids_with_practices`**-style field), and **archiving feedback to `practice_feedback_history` on session complete** are **in scope for this feature’s implementation**—not a separate “progress-only” milestone. They ship together with persisting **`PracticeFeedback`** on Get Feedback.
+
+### 2.5 Spoken transcript as server-side LLM input
+
+**Source of truth:** **`combined_transcript`** and duration aggregates for the LLM are derived only from persisted **`PracticeTranscriptSegment`** rows for the submit **`practice_id`**, as specified in [Audio Recording](03-audio-recording.md) and [Audio Recording – Backend](backend/03-audio-recording.md).
+
+**Server responsibility:** The backend loads segments in **`segment_order`**, applies the same concatenation and duration rules used elsewhere (e.g. validation endpoints), and builds the transcript block for the evaluation prompt. The client **must not** send **`combined_transcript`** or **`total_duration_seconds`** on **`POST /api/v1/practice`** (see §4.1); the server does not treat ad-hoc client transcript fields as authoritative when they bypass persisted segments.
+
+**Validation before LLM:**
+
+- For questions with **`requires_spoken_explanation`**: enforce segment presence and quality per the Audio PRDs before calling the LLM (reject or return **400** with a clear message when requirements are not met).
+- For optional spoken explanation (V1): if there are no segments, the prompt uses an **empty or explicitly optional** transcript slot as defined in the prompt template.
+
+**Prompt contract:** Every evaluation prompt includes question context, diagram-derived text (from the submitted whiteboard payload), and a **combined transcript** section. That section may be empty when speech is optional; it must still appear in the template so the model’s instructions stay stable.
+
 ---
 
 ## 3. Practice and Submit Flow
@@ -205,7 +240,7 @@ Request Body:
 
 Notes:
 - Client must not send `combined_transcript` or `total_duration_seconds` in this request.
-- Backend computes transcript aggregates from persisted transcript segments by `practice_id`.
+- Backend computes transcript aggregates from persisted transcript segments by `practice_id` (full contract: **§2.5**).
 
 Response (200 OK):
 {
@@ -237,7 +272,8 @@ Error Responses:
 - Fallback: Queue for later processing if service unavailable
 
 **Speech Transcript Input:**
-- Source: Persisted transcript segments, combined server-side by `practice_id` during `POST /api/v1/practice`
+- See **§2.5** for source of truth, validation, and prompt usage.
+- Summary: Persisted transcript segments, combined server-side by `practice_id` during `POST /api/v1/practice`.
 - Languages: English (initial), expand later
 - Constraint: Quality depends on frontend speech recognition accuracy
 
