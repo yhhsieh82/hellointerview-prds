@@ -23,7 +23,9 @@ The AI Feedback System enables users to receive AI-generated evaluation and feed
 6. Parses and stores the feedback
 7. Returns feedback to the frontend for display
 
-The system supports edit-and-resubmit workflows: users can improve their answers and request new feedback, with each submission creating a new PracticeFeedback record while preserving history in the database.
+The system supports edit-and-resubmit workflows: users can improve their answers and request new feedback, with each submission creating a new **`PracticeFeedback`** record while preserving history in the database.
+
+**Data model note:** Resubmit uses the **same canonical `practice_id`** per `(practice_main_id, question_id)` for that session. Multiple submissions do **not** create multiple active **`Practice`** rows for the same question in the same session; history is carried by **`PracticeFeedback`** (and optional history tables). See Foundation PRD and Practice Session Management backend PRD for the unique constraint on `Practice`.
 
 ---
 

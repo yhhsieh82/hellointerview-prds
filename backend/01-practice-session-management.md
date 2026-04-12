@@ -25,7 +25,7 @@ Returned by `GET /api/v1/practice-main`:
   "status": "practicing",
   "started_at": "2026-02-13T09:00:00Z",
   "completed_at": "2026-02-13T11:30:00Z",
-  "question_ids_with_practices": [10, 20]
+  "question_ids_with_feedback": [10, 20]
 }
 ```
 
@@ -35,7 +35,7 @@ Returned by `GET /api/v1/practice-main`:
 - **status** (string): Session status; currently `"practicing"` or `"completed"`.
 - **started_at** (string, ISO‑8601): When the session started.
 - **completed_at** (string, ISO‑8601, optional): Present only when the session is completed.
-- **question_ids_with_practices** (array\<number>): Question IDs that have at least one `Practice` for this session (used for progress dots).
+- **question_ids_with_feedback** (array\<number>): Question IDs for which at least one **`PracticeFeedback`** row exists in this session (i.e. the user completed Get Feedback at least once for that question). Used for **progress dots**. A `Practice` row is not required for every question until the user records speech or submits feedback; progress reflects **feedback received**, not draft work or transcript-only state.
 
 ### 1.2 `PracticeMain` (Create / Update Body & Response)
 
@@ -86,7 +86,7 @@ Standard error format returned by GlobalExceptionHandler:
 
 ### 2.2 Description
 
-Retrieve the **active** practice session for a given user and `QuestionMain`, including which questions already have practice submissions.
+Retrieve the **active** practice session for a given user and `QuestionMain`, including which questions already have **AI feedback** (see `question_ids_with_feedback`).
 
 The typical frontend flow:
 
@@ -114,7 +114,7 @@ The typical frontend flow:
     "status": "practicing",
     "started_at": "2026-02-13T09:00:00Z",
     "completed_at": null,
-    "question_ids_with_practices": [10, 20]
+    "question_ids_with_feedback": [10, 20]
   }
   ```
 
@@ -170,7 +170,7 @@ Accept: application/json
   "status": "practicing",
   "started_at": "2026-02-13T09:00:00Z",
   "completed_at": null,
-  "question_ids_with_practices": [10, 20]
+  "question_ids_with_feedback": [10, 20]
 }
 ```
 
@@ -396,18 +396,119 @@ Accept: application/json
 
 ---
 
-## 5. Frontend Integration Notes
+## 5. Get canonical Practice for a question
+
+### 5.1 Endpoint
+
+- **Method:** `GET`
+- **Path:** `/api/v1/practice-main/{practice_main_id}/practices`
+- **Query parameters:** `question_id` (number, required)
+
+### 5.2 Description
+
+Returns the **single** canonical `Practice` for the given `practice_main_id` and `question_id`, including speech-capture state for that answer. The active `practice` table enforces **`UNIQUE (practice_main_id, question_id)`** (see Foundation PRD). This endpoint does **not** return `PracticeMain.whiteboard_content`; the canonical diagram remains on `PracticeMain`.
+
+### 5.3 Responses
+
+- **200 OK** — Body: `PracticeQuestionStateDto` (single object):
+
+```json
+{
+  "practice_id": 789,
+  "practice_main_id": 123,
+  "question_id": 456,
+  "transcript_segments": [
+    {
+      "segment_order": 1,
+      "transcript_text": "First I would define the core services...",
+      "duration_seconds": 80
+    }
+  ],
+  "total_duration_seconds": 80,
+  "combined_transcript": "First I would define the core services..."
+}
+```
+
+- **transcript_segments** (array): Ordered by `segment_order`. May be empty if no speech has been saved yet.
+- **total_duration_seconds** and **combined_transcript**: Derived from segments in V1 (see [Audio Recording – Backend APIs](03-audio-recording.md)).
+
+- **404 Not Found** — No `Practice` row exists for this `(practice_main_id, question_id)` pair. Client may call **§6 Create or get Practice** before the first transcript segment upload.
+
+- **409 Conflict** — More than one row matches (data integrity violation). Use a stable `error` value such as `practice_duplicate_for_question` and a clear `message`. This state MUST NOT occur when the unique constraint is enforced.
+
+- **403 Forbidden** — Caller cannot access this `practice_main_id` (when auth is enforced).
+
+### 5.4 Example
+
+```http
+GET /api/v1/practice-main/123/practices?question_id=456
+Accept: application/json
+```
+
+---
+
+## 6. Create or get Practice for a question
+
+### 6.1 Endpoint
+
+- **Method:** `POST`
+- **Path:** `/api/v1/practice-main/{practice_main_id}/practices`
+- **Content-Type:** `application/json`
+
+### 6.2 Description
+
+**Idempotent create-or-get:** Ensures exactly one `Practice` row exists for `(practice_main_id, question_id)` so the client can obtain a `practice_id` before **`POST /api/v1/practice/{practice_id}/transcript-segments`** (see [Audio Recording – Backend APIs](03-audio-recording.md)). Does not create `PracticeFeedback`; progress dots still follow **`question_ids_with_feedback`**.
+
+### 6.3 Request body
+
+```json
+{
+  "question_id": 456
+}
+```
+
+### 6.4 Responses
+
+- **201 Created** — New row inserted. Body: same `PracticeQuestionStateDto` as **§5.3** (typically empty `transcript_segments`).
+
+- **200 OK** — Row already existed. Body: current `PracticeQuestionStateDto` (same shape as GET **200**).
+
+- **Concurrency:** If two requests race to create the same row, the unique constraint MUST ensure only one row survives. The losing insert SHOULD be handled idempotently: **load the existing row and return `200 OK`** with its `PracticeQuestionStateDto` (do not surface a user-facing error for a benign race).
+
+- **400 Bad Request** — Missing or invalid `question_id`.
+
+- **403 Forbidden** — Caller cannot write this session.
+
+- **404 Not Found** — `practice_main_id` or `question_id` parent entities invalid, if validated.
+
+### 6.5 Example
+
+```http
+POST /api/v1/practice-main/123/practices
+Content-Type: application/json
+
+{
+  "question_id": 456
+}
+```
+
+---
+
+## 7. Frontend Integration Notes
 
 - **Start / Resume Flow**
   - Call `GET /api/v1/practice-main?user_id={userId}&question_main_id={questionMainId}`.
-    - **200** → Resume existing session; use `question_ids_with_practices` to render progress dots.
+    - **200** → Resume existing session; use `question_ids_with_feedback` to render progress dots.
     - **404** → No active session; call `POST /api/v1/practice-main` to create one, then load questions via `GET /api/v1/question-mains/{id}`.
 
 - **Progress Dots**
   - For a given `QuestionMain`, frontends already have the ordered list of `Question` IDs from `GET /api/v1/question-mains/{id}`.
-  - Compare that list against `question_ids_with_practices` from the GET practice main response to determine:
-    - **Blue dot**: question id is present in `question_ids_with_practices`.
-    - **Grey dot**: question id is not present.
+  - Compare that list against `question_ids_with_feedback` from the GET practice main response to determine:
+    - **Blue dot**: question id is present in `question_ids_with_feedback` (at least one **`PracticeFeedback`** for that question in this session).
+    - **Grey dot**: question id is not present (no feedback yet; draft whiteboard or transcript work does not change the dot).
+
+- **Speech capture / question load**
+  - To load persisted transcript and `practice_id` for a question: **`GET /api/v1/practice-main/{practice_main_id}/practices?question_id={id}`** (§5). If **404**, call **`POST /api/v1/practice-main/{practice_main_id}/practices`** with `{ "question_id" }` (§6), then use returned `practice_id` for segment uploads.
 
 - **Complete and Review Flow**
   - On “Complete and Review”, call `PATCH /api/v1/practice-main/{id}` with `{ "status": "completed" }`.

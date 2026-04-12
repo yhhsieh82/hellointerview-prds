@@ -66,7 +66,7 @@ Returned by `GET /api/v1/practice-main` and used in some `PATCH` responses. This
   "status": "practicing",
   "started_at": "2026-02-13T09:00:00Z",
   "completed_at": "2026-02-13T11:30:00Z",
-  "question_ids_with_practices": [10, 20],
+  "question_ids_with_feedback": [10, 20],
   "whiteboard_content": {
     "section_1": { "type": "diagram", "version": "1.0", "elements": [], "appState": {}, "files": {} },
     "section_2": { "type": "diagram", "version": "1.0", "elements": [], "appState": {}, "files": {} },
@@ -76,6 +76,8 @@ Returned by `GET /api/v1/practice-main` and used in some `PATCH` responses. This
   }
 }
 ```
+
+- **question_ids_with_feedback** (array\<number>): Same semantics as in `01-practice-session-management.md` (questions with at least one **`PracticeFeedback`** in this session).
 
 - **whiteboard_content** (object, nullable):
   - When a session is newly created, it is initialized to the canonical empty 5-section structure.
@@ -165,7 +167,7 @@ Unchanged from existing practice-session backend:
     "status": "practicing",
     "started_at": "2026-02-13T09:00:00Z",
     "completed_at": null,
-    "question_ids_with_practices": [10, 20],
+    "question_ids_with_feedback": [10, 20],
     "whiteboard_content": {
       "section_1": { "type": "diagram", "version": "1.0", "elements": [], "appState": {}, "files": {} },
       "section_2": { "type": "diagram", "version": "1.0", "elements": [], "appState": {}, "files": {} },
@@ -212,7 +214,7 @@ Accept: application/json
   "status": "practicing",
   "started_at": "2026-02-13T09:00:00Z",
   "completed_at": null,
-  "question_ids_with_practices": [10, 20],
+  "question_ids_with_feedback": [10, 20],
   "whiteboard_content": {
     "section_1": { "type": "diagram", "version": "1.0", "elements": [], "appState": {}, "files": {} },
     "section_2": { "type": "diagram", "version": "1.0", "elements": [], "appState": {}, "files": {} },
@@ -461,7 +463,7 @@ Accept: application/json
   - Debounced (~5 seconds) after any whiteboard change:
     - Frontend sends **full** `whiteboard_content` to `PATCH /api/v1/practice-main/{id}`.
     - The backend stores this as the canonical last state; there is no per-section diffing or merging.
-  - Autosave **does not** create/update `Practice` or `PracticeFeedback` records.
+  - Autosave **does not** create/update `Practice` or `PracticeFeedback` records. To create a `Practice` row for speech capture or other per-question state without submitting for feedback, the client uses **`POST /api/v1/practice-main/{practice_main_id}/practices`** (see `resource/prds/backend/01-practice-session-management.md` §6).
 
 - **Get Feedback interaction (high level)**
   - When the user clicks “Get Feedback” for a question:

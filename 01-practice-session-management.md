@@ -56,8 +56,8 @@ As a user, I want to see my progress across all questions so I can track what I'
 
 **Acceptance Criteria:**
 - Progress dots display at top of left panel
-- Blue dot indicates question has a practice submission
-- Grey dot indicates no submission yet
+- Blue dot indicates the question has **AI feedback** (at least one **`PracticeFeedback`** for that question in the current session)
+- Grey dot indicates **no feedback yet** (draft whiteboard or transcript work alone does not turn the dot blue)
 - Grey outline indicates currently selected question
 - Clicking any dot navigates to that question
 - Progress persists across sessions

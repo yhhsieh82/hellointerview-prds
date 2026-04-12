@@ -1,7 +1,7 @@
 # PRD: Audio Recording
 
-**Version:** 2.1  
-**Date:** March 10, 2026  
+**Version:** 2.2  
+**Date:** April 11, 2026  
 **Status:** Draft  
 
 See [Foundation PRD](00-foundation.md) for shared data models and platform requirements.
@@ -43,8 +43,9 @@ As a user answering High Level Design or Deep Dive questions, I want to speak my
 - Browser microphone and speech recognition permissions requested on first use
 - Spoken explanation is encouraged for these question types, but submission is not blocked if transcript is empty or missing
 - When the user clicks `Stop`, the frontend finalizes the current transcript segment and persists it to the related `practice`
-- When the user closes the browser and later returns to the same question, previously saved transcript segments are loaded and the user can continue speaking on the same `practice`
+- When the user opens or returns to a question, the frontend loads persisted transcript for the canonical `Practice` for that question in the current session (see API below) and the user can continue speaking on the same `practice`
 - UI displays the total captured duration across all saved transcript segments for the current `practice`
+- A read-only **“Your answer”** section (title exactly **Your answer**) appears **below** the speech capture controls and shows the persisted combined transcript (or an empty state). Layout order: controls first, then **Your answer**
 - V1 does not provide delete-recording or segment-removal controls; users can only add more speech and submit
 - UI shows a non-blocking warning when the current recording segment crosses 3 minutes
 - Max cumulative speaking duration: 10 minutes per `practice`
@@ -60,15 +61,22 @@ As a user answering High Level Design or Deep Dive questions, I want to speak my
 
 **API Flow:**
 ```
-1. User clicks Start Speaking -> Start browser speech recognition
-2. Frontend accumulates transcript text and tracks elapsed duration
-3. User clicks Stop -> Finalize transcript segment
-4. POST /api/v1/practice/{practice_id}/transcript-segments
-5. Backend stores transcript_text, duration_seconds, segment_order
-6. Backend returns updated total_duration_seconds and transcript summary
-7. User later returns -> GET practice data includes saved transcript segments and total duration
+1. On question load -> GET /api/v1/practice-main/{practice_main_id}/practices?question_id={id}
+   - 200: render transcript in "Your answer"; store practice_id
+   - 404: empty "Your answer"; call POST /api/v1/practice-main/{practice_main_id}/practices { question_id } to create-or-get practice_id before first segment
+2. User clicks Start Speaking -> Start browser speech recognition
+3. Frontend accumulates transcript text and tracks elapsed duration
+4. User clicks Stop -> Finalize transcript segment
+5. POST /api/v1/practice/{practice_id}/transcript-segments
+6. Backend stores transcript_text, duration_seconds, segment_order
+7. Backend returns updated total_duration_seconds and combined_transcript; refresh "Your answer"
 8. On Get Feedback (`POST /api/v1/practice`), backend computes merged transcript from stored transcript segments by `practice_id`
 ```
+
+**Empty states (testable):**
+
+- **GET returned 404** (no `Practice` row yet): **Your answer** is empty; client must create-or-get via **POST .../practices** before the first segment save.
+- **GET returned 200** with **empty `transcript_segments`**: **Your answer** is empty but client **has** `practice_id` and may upload segments immediately.
 
 ---
 
@@ -103,33 +111,38 @@ Error Responses:
 - 500 Internal Server Error
 ```
 
-### 3.2 Load Existing Speech Capture State
+### 3.2 Load speech capture state (question load — primary)
 
-The practice fetch endpoint should include the current transcript capture state for applicable questions so the frontend can restore the experience after reload or browser close.
+Canonical contract: **`resource/prds/backend/01-practice-session-management.md`** §5.
+
+```
+GET /api/v1/practice-main/{practice_main_id}/practices?question_id={question_id}
+```
+
+Returns a single **`PracticeQuestionStateDto`**: `practice_id`, `practice_main_id`, `question_id`, `transcript_segments`, `total_duration_seconds`, `combined_transcript`. **404** if no row exists yet.
+
+### 3.3 Create or get Practice before first segment
+
+If §3.2 returns **404**, call (same doc §6):
+
+```
+POST /api/v1/practice-main/{practice_main_id}/practices
+Content-Type: application/json
+
+{ "question_id": 456 }
+```
+
+Response body matches §3.2 success shape (typically empty segments). **201** on first creation, **200** if row already existed.
+
+### 3.4 Load by `practice_id` (optional)
+
+When the client already has `practice_id`, it may use:
 
 ```
 GET /api/v1/practice/{practice_id}
-
-Response excerpt:
-{
-  "practice_id": 789,
-  "question_id": 456,
-  "transcript_segments": [
-    {
-      "segment_order": 1,
-      "transcript_text": "First I would define the core services...",
-      "duration_seconds": 80
-    },
-    {
-      "segment_order": 2,
-      "transcript_text": "For data storage I would separate hot and cold paths...",
-      "duration_seconds": 70
-    }
-  ],
-  "total_duration_seconds": 150,
-  "combined_transcript": "First I would define..."
-}
 ```
+
+Response shape matches [Audio Recording – Backend APIs](backend/03-audio-recording.md) §4.
 
 ---
 
@@ -172,7 +185,9 @@ Response excerpt:
 - **16.** User submits without speech on Deep Dive -> Submission succeeds, AI evaluates whiteboard-only input
 - **17.** Current segment crosses 3 minutes -> Non-blocking warning is shown
 - **18.** Total speaking duration reaches 10 minutes -> Capture stops, warning shown
-- **19.** User stops speaking, closes browser, returns later -> Saved transcript and total duration are restored
+- **19.** User stops speaking, closes browser, returns later -> GET practice-main/.../practices restores transcript and total duration in **Your answer**
+- **32.** GET practices returns 404 -> Empty **Your answer**; after POST create-or-get, first segment saves successfully
+- **33.** GET practices returns 200 with empty segments -> Empty **Your answer**; segment POST works without extra create
 - **20.** User adds another speech segment -> Combined transcript and total duration update correctly
 - **21.** User cannot delete prior speech segments -> UI offers continue-only flow
 
@@ -206,3 +221,15 @@ Response excerpt:
 - Follows standard button specifications (see Foundation PRD)
 - Primary action styling when capture is available
 - Error/warning styling for active listening state and unsupported-browser states
+
+### 6.2 Your answer (read-only transcript)
+
+**Placement:** Directly **below** the speech capture control (§6.1).
+
+**Title:** **Your answer** (section heading).
+
+**Content:** Read-only display of **`combined_transcript`** (or equivalent text assembled from loaded segments). Long text may scroll within the region.
+
+**Empty state:** When there is no saved speech yet, show a short placeholder (e.g. “No spoken answer saved yet.”) or equivalent; same region remains visible so layout does not jump.
+
+**Updates:** After each successful segment save, refresh from the save response or refetch §3.2 so displayed text matches server truth.

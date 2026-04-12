@@ -109,7 +109,7 @@ erDiagram
     PracticeMain ||--o{ Practice : contains
     Question ||--o{ Practice : "answered_in"
     Practice ||--o{ PracticeTranscriptSegment : contains
-    Practice ||--o| PracticeFeedback : receives
+    Practice ||--o{ PracticeFeedback : receives
     
     User {
         int user_id PK
@@ -153,8 +153,6 @@ erDiagram
         int practice_id PK
         int practice_main_id FK
         int question_id FK
-        text combined_transcript
-        int total_duration_seconds
         timestamp submitted_at
         timestamp updated_at
     }
@@ -237,12 +235,16 @@ erDiagram
   practice_id: Integer (Primary Key, Auto-increment)
   practice_main_id: Integer (Foreign Key → PracticeMain)
   question_id: Integer (Foreign Key → Question)
-  combined_transcript: text (nullable) // Concatenated transcript across all saved segments for this answer
-  total_duration_seconds: integer (default: 0) // Sum of all saved transcript segment durations
   submitted_at: timestamp
   updated_at: timestamp
 }
 ```
+
+**Uniqueness (active rows):** The active `practice` table MUST enforce **`UNIQUE (practice_main_id, question_id)`** (e.g. constraint `uq_practice_main_question`). At most one canonical `Practice` row exists per question within a given `PracticeMain`. This constraint applies only to the active `practice` table, not to `practice_history` or other archive tables.
+
+**Transcript aggregates:** In API responses, **`combined_transcript`** and **`total_duration_seconds`** for a practice are **derived from `PracticeTranscriptSegment` rows** in V1 (ordered by `segment_order`). A physical schema MAY include optional denormalized columns for performance; if present, they are a cache and the **source of truth remains segment rows**.
+
+**Resubmit / new feedback:** Edit-and-resubmit reuses the **same `practice_id`** for that question in that session. New evaluation history is stored as additional **`PracticeFeedback`** rows (and optional history tables), not as additional active `Practice` rows for the same `(practice_main_id, question_id)`.
 
 #### PracticeTranscriptSegment
 ```typescript
@@ -256,7 +258,7 @@ erDiagram
 }
 ```
 
-For questions that require spoken explanation, `Practice` rows MAY be created before final feedback submission so transcript segments can be persisted across browser sessions. For other question types, `Practice` rows are still created or updated on explicit submit. Autosave of diagram content continues to operate on `PracticeMain.whiteboard_content`.
+For questions that require spoken explanation, `Practice` rows MAY be created before final feedback submission (e.g. via **`POST /api/v1/practice-main/{practice_main_id}/practices`**) so transcript segments can be persisted across browser sessions. For other question types, `Practice` rows are typically created or updated on explicit Get Feedback submit. Autosave of diagram content continues to operate on `PracticeMain.whiteboard_content` and does **not** create `Practice` rows; see Practice Session Management and Whiteboard backend PRDs.
 
 **Whiteboard Content Structure (PracticeMain.whiteboard_content):**
 ```json

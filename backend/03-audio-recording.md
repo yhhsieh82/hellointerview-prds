@@ -35,6 +35,15 @@ All endpoints are versioned under `v1` and are served by the same Spring Boot se
 - `POST /api/v1/practice` uses server-side transcript segment aggregation as source of truth.
 - AI feedback generation uses `combined_transcript` as prompt input.
 
+### 1.4 Practice discovery and create-or-get (session-scoped)
+
+Canonical API definitions live in [Practice Session Management – Backend APIs](01-practice-session-management.md):
+
+- **`GET /api/v1/practice-main/{practice_main_id}/practices?question_id={question_id}`** — primary way to load transcript state and `practice_id` when the user opens a question (see §5 there).
+- **`POST /api/v1/practice-main/{practice_main_id}/practices`** with `{ "question_id" }` — idempotent create-or-get when **GET** returned **404** and the user needs a `practice_id` before the first segment upload (see §6 there).
+
+**`GET /api/v1/practice/{practice_id}`** (§4 below) remains valid when the client already has `practice_id`.
+
 ---
 
 ## 2. Common Models
@@ -125,7 +134,7 @@ Optional validation detail extension:
 
 Persists one transcript segment produced when the user presses Stop. This endpoint can be called repeatedly for the same `practice_id`, enabling multiple recordings per question.
 
-Prerequisite rule: `practice_id` is obtained by create-or-get practice **before recording starts**. Therefore, this transcript segment API requires an existing `practice_id`.
+Prerequisite rule: `practice_id` must exist **before** the first segment upload. Typical flow: **`GET .../practice-main/{id}/practices?question_id=...`**; if **404**, call **`POST .../practice-main/{id}/practices`** (see §1.4), then call this segment endpoint. The client stores `practice_id` for subsequent Stop events in the same session.
 
 ### 3.3 Path parameters
 
@@ -194,7 +203,7 @@ Accept: application/json
 
 ### 4.2 Description
 
-Returns current speech capture state so the frontend can restore prior work and continue speaking after refresh or returning later.
+Returns current speech capture state so the frontend can restore prior work and continue speaking after refresh or returning later. On **initial question load**, prefer **`GET /api/v1/practice-main/{practice_main_id}/practices?question_id={question_id}`** (§1.4) so the client does not need a cached `practice_id`. This endpoint is for direct fetch when `practice_id` is already known.
 
 ### 4.3 Response excerpt
 
@@ -270,18 +279,21 @@ When the user clicks Get Feedback, backend computes merged speech context from p
 
 ## 7. Frontend Integration Notes
 
-1. Before recording starts, frontend create-or-get a practice and stores `practice_id`.
-2. User clicks Start Speaking and browser speech recognition begins.
-3. User clicks Stop and frontend finalizes one transcript segment.
-4. Frontend calls `POST /api/v1/practice/{practice_id}/transcript-segments`.
-5. Backend returns updated `total_duration_seconds` and `combined_transcript`.
-6. User may click Continue Speaking and repeat steps 3-5 multiple times.
-7. On Get Feedback, frontend submits `practice_id` and whiteboard payload in `POST /api/v1/practice`; backend computes transcript aggregates.
-8. Frontend should show a non-blocking warning when the current segment crosses 3 minutes.
-9. Frontend should stop active recording when cumulative speaking duration reaches 10 minutes; backend still enforces the 600-second cap.
-10. Submission is not blocked for missing transcript in V1.
+1. On question load, call **`GET /api/v1/practice-main/{practice_main_id}/practices?question_id={question_id}`** to load transcript state and obtain `practice_id`. If **404**, call **`POST /api/v1/practice-main/{practice_main_id}/practices`** with `{ "question_id" }`, then use returned `practice_id`.
+2. Render speech controls; show persisted transcript in read-only **“Your answer”** below the controls (product PRD). **404** before create-or-get, or **200** with empty `transcript_segments`, both mean an empty transcript until the user saves a segment.
+3. User clicks Start Speaking and browser speech recognition begins.
+4. User clicks Stop and frontend finalizes one transcript segment.
+5. Frontend calls `POST /api/v1/practice/{practice_id}/transcript-segments`.
+6. Backend returns updated `total_duration_seconds` and `combined_transcript`; update **“Your answer”** from the response (or refetch §1.4 GET).
+7. User may click Continue Speaking and repeat steps 4-6 multiple times.
+8. On Get Feedback, frontend submits `practice_id` and whiteboard payload in `POST /api/v1/practice`; backend computes transcript aggregates.
+9. Frontend should show a non-blocking warning when the current segment crosses 3 minutes.
+10. Frontend should stop active recording when cumulative speaking duration reaches 10 minutes; backend still enforces the 600-second cap.
+11. Submission is not blocked for missing transcript in V1.
 
 No transcript segment delete/edit is provided in V1; users only append and submit.
+
+**Progress dots** on the session chrome follow **`question_ids_with_feedback`** on `PracticeMain`, not the existence of a `Practice` row alone (see `01-practice-session-management.md`).
 
 ---
 
@@ -309,6 +321,6 @@ This issue is **documented** for V1; resolving it fully may require contract cha
 
 - Supports multiple recording cycles per question via append-only transcript segments.
 - Maintains deterministic merged `combined_transcript` for AI feedback.
-- Uses `POST /api/v1/practice/{practice_id}/transcript-segments` and `GET /api/v1/practice/{practice_id}` as the core API surface.
+- Uses **`GET` / `POST` `/api/v1/practice-main/{practice_main_id}/practices`** for question-scoped load and create-or-get, plus **`POST /api/v1/practice/{practice_id}/transcript-segments`** and optional **`GET /api/v1/practice/{practice_id}`**.
 - Uses server-side transcript aggregation as source of truth during `POST /api/v1/practice`.
 - Aligns with product PRD recording behavior and AI Feedback request contract.
