@@ -4,7 +4,7 @@ This document specifies the backend APIs implemented for the **Practice Session 
 
 These APIs support:
 - **Start / Resume** a practice session
-- **Progress tracking** (which questions have at least one practice submission)
+- **Progress tracking** (which questions have at least one **`PracticeFeedback`** — see §1.1 and [AI Feedback PRD §2.4](../../04-ai-feedback-system.md))
 - **Complete** a practice session and archive it to history
 
 All endpoints are versioned under `v1` and are served by the same Spring Boot service.

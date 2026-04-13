@@ -38,7 +38,7 @@ As a user answering High Level Design or Deep Dive questions, I want to speak my
 - Speech capture controls appear only for question types: "High Level Design", "Deep Dive"
 - Button states:
   - Idle: Microphone icon, "Start Speaking"
-  - Listening: Red dot, live timer, "Stop"
+  - Listening: Red dot, live current-segment recording timer (MM:SS), "Stop"
   - Saved: Checkmark, total captured duration, "Continue Speaking"
 - Browser microphone and speech recognition permissions requested on first use
 - Spoken explanation is encouraged for these question types, but submission is not blocked if transcript is empty or missing
@@ -206,7 +206,7 @@ Response shape matches [Audio Recording – Backend APIs](backend/03-audio-recor
 
 **Visual States:**
 - **Idle:** Microphone icon, "Start Speaking" label
-- **Listening:** Red dot, current segment timer, "Stop" label
+- **Listening:** Red dot, live current-segment recording timer (MM:SS), "Stop" label
 - **Saved:** Checkmark icon, total duration display, "Continue Speaking" label
 
 **Behavior:**
