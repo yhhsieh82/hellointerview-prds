@@ -308,10 +308,12 @@ For questions that require spoken explanation, `Practice` rows MAY be created be
   practice_feedback_id: Integer (Primary Key, Auto-increment)
   practice_id: Integer (Foreign Key → Practice)
   feedback_text: text (required) // AI-generated feedback
-  score: float (nullable, 0-100) // Optional numerical score
+  score: float (required, 0-100) // Backend-generated score used for deterministic grade mapping
   generated_at: timestamp
 }
 ```
+
+**API projection note:** Feedback APIs may include derived presentation fields in response payloads, such as `grade_label` and `grade_color`, mapped from `score` by deterministic band rules in the AI Feedback PRD. These derived fields are API contract fields and do not require dedicated DB columns in V1.
 
 #### History Tables
 ```sql

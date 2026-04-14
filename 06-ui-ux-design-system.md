@@ -34,6 +34,15 @@ This design system establishes the visual language, component specifications, an
 - **Text Primary:** Dark Gray (#111827)
 - **Text Secondary:** Medium Gray (#6B7280)
 
+**Feedback score semantic tokens (label + color only):**
+- `score_needs_improvement_red`: #EF4444
+- `score_below_expectations_orange`: #F97316
+- `score_developing_yellow`: #F59E0B
+- `score_good_blue`: #3B82F6
+- `score_strong_green`: #10B981
+
+**Usage rule:** Score performance UI uses a grade label paired with one of the semantic color tokens above. Numeric score must not be displayed in V1 UI.
+
 ### 2.2 Typography
 - **Heading 1:** 32px, Semi-bold
 - **Heading 2:** 24px, Semi-bold
@@ -128,6 +137,7 @@ This design system establishes the visual language, component specifications, an
 - Focus indicators (2px outline)
 - Alt text for icons
 - Minimum touch target size: 44x44px
+- For score performance states, never use color alone; always render grade label text together with color.
 
 ---
 
@@ -167,7 +177,7 @@ This design system establishes the visual language, component specifications, an
 21. User submits with spoken explanation → Feedback incorporates transcript-based evaluation
 22. LLM service fails → Graceful error message, retry option
 23. User edits and resubmits → New feedback generated, old preserved in DB
-24. Feedback includes score → Score displayed prominently
+24. Feedback includes grade label and semantic performance color → UI renders label+color only
 
 **Edge Cases:**
 25. User loses internet connection → Shows offline message, queues saves

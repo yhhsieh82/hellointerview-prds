@@ -5,8 +5,8 @@
 
 See [Foundation PRD](00-foundation.md) for data models and infrastructure. Uses output from [Audio Recording](03-audio-recording.md).
 
-**Version:** 2.0  
-**Date:** February 13, 2026  
+**Version:** 2.1  
+**Date:** April 14, 2026  
 **Status:** Draft  
 
 ---
@@ -27,7 +27,7 @@ The system supports edit-and-resubmit workflows: users can improve their answers
 
 **Data model note:** Resubmit uses the **same canonical `practice_id`** per `(practice_main_id, question_id)` for that session. Multiple submissions do **not** create multiple active **`Practice`** rows for the same question in the same session; history is carried by **`PracticeFeedback`** (and optional history tables). See Foundation PRD and Practice Session Management backend PRD for the unique constraint on `Practice`.
 
-**Progress and transcript (this PRD):** How **session progress indicators** (progress dots) relate to **`PracticeFeedback`** versus draft work is defined in **§2.4**. How **spoken transcript** is derived and passed into the LLM is defined in **§2.5**.
+**Progress, score, and transcript (this PRD):** How **session progress indicators** (progress dots) relate to **`PracticeFeedback`** versus draft work is defined in **§2.5**. How **feedback score is mapped to label + color** is defined in **§2.4**. How **spoken transcript** is derived and passed into the LLM is defined in **§2.6**.
 
 ---
 
@@ -51,7 +51,7 @@ As a user, when I click "Get Feedback", the system should save my whiteboard con
 - Feedback includes:
   - Text evaluation
   - Specific suggestions
-  - Optional numerical score
+  - Score-derived grade label and performance color
 
 **API Request:**
 ```
@@ -73,6 +73,8 @@ Request Body:
     "practice_feedback_id": 999,
     "feedback_text": "Your functional requirements are well-defined...",
     "score": 85.5,
+    "grade_label": "Strong",
+    "grade_color": "score_strong_green",
     "generated_at": "2026-02-13T10:30:00Z"
   }
 }
@@ -87,7 +89,7 @@ Request Body:
 3. Construct LLM prompt with:
    - Question context
    - Diagram description
-   - Combined spoken transcript (server-derived from persisted transcript segments—see **§2.5**)
+   - Combined spoken transcript (server-derived from persisted transcript segments—see **§2.6**)
    - Evaluation criteria
 4. Send to LLM API (OpenAI/Anthropic)
 5. Parse and store feedback
@@ -161,7 +163,27 @@ After receiving feedback, I want to improve my answer and get new feedback.
 - Feedback history preserved in database
 - UI shows latest feedback only
 
-### 2.4 Session progress and `PracticeFeedback`
+### 2.4 Feedback score grading model (label + color only)
+
+The backend computes a numeric score (`0-100`) for each generated feedback and deterministically maps it to a grade label and semantic color token. The frontend displays **label + color only** for performance state and must not display the numeric score in V1.
+
+**Grade bands (fixed width: 20 points):**
+
+| Score Range | Grade Label | Grade Color Token |
+|-------------|-------------|-------------------|
+| 0-19 | Needs Improvement | `score_needs_improvement_red` |
+| 20-39 | Below Expectations | `score_below_expectations_orange` |
+| 40-59 | Developing | `score_developing_yellow` |
+| 60-79 | Good | `score_good_blue` |
+| 80-100 | Strong | `score_strong_green` |
+
+**Rules:**
+- Mapping must be deterministic and stable across retries/resubmits.
+- Boundary values map exactly as defined above (for example: `19`, `20`, `39`, `40`, `79`, `80`, `100`).
+- `grade_label` and `grade_color` are required in successful feedback API responses.
+- If score or grade derivation fails, return `500` and do not persist a partial `PracticeFeedback` row.
+
+### 2.5 Session progress and `PracticeFeedback`
 
 This subsection ties **Get Feedback** to **session chrome** (progress dots) and the **`GET /api/v1/practice-main`** contract. Full UX copy lives in [Practice Session Management](01-practice-session-management.md) §3.1.2; API field semantics in [Practice Session Management – Backend](backend/01-practice-session-management.md) §1.1.
 
@@ -181,7 +203,7 @@ This subsection ties **Get Feedback** to **session chrome** (progress dots) and 
 
 **Backend alignment:** Introducing the active **`practice_feedback`** table (per [Foundation](00-foundation.md)), returning **`question_ids_with_feedback`** on **GET practice-main** (replacing any interim **`question_ids_with_practices`**-style field), and **archiving feedback to `practice_feedback_history` on session complete** are **in scope for this feature’s implementation**—not a separate “progress-only” milestone. They ship together with persisting **`PracticeFeedback`** on Get Feedback.
 
-### 2.5 Spoken transcript as server-side LLM input
+### 2.6 Spoken transcript as server-side LLM input
 
 **Source of truth:** **`combined_transcript`** and duration aggregates for the LLM are derived only from persisted **`PracticeTranscriptSegment`** rows for the submit **`practice_id`**, as specified in [Audio Recording](03-audio-recording.md) and [Audio Recording – Backend](backend/03-audio-recording.md).
 
@@ -239,9 +261,11 @@ Request Body:
 
 Notes:
 - Client must not send `combined_transcript` or `total_duration_seconds` in this request.
-- Backend computes transcript aggregates from persisted transcript segments by `practice_id` (full contract: **§2.5**).
+- Backend computes transcript aggregates from persisted transcript segments by `practice_id` (full contract: **§2.6**).
 - `practice_id` is the canonical per-question row obtained via `GET/POST /api/v1/practice-main/{practice_main_id}/practices`.
 - `Idempotency-Key` is optional. When present, duplicate requests with the same key from the same caller within a short dedupe window should return the original successful response instead of creating an additional `PracticeFeedback`.
+- Backend must return `grade_label` and `grade_color` for every successful feedback generation.
+- Frontend performance display in V1 must use `grade_label` + `grade_color` only (do not render numeric score).
 
 Response (200 OK):
 {
@@ -250,6 +274,8 @@ Response (200 OK):
     "practice_feedback_id": 999,
     "feedback_text": "Your solution demonstrates...",
     "score": 85.5,
+    "grade_label": "Strong",
+    "grade_color": "score_strong_green",
     "generated_at": "2026-02-13T10:05:00Z"
   },
   "submitted_at": "2026-02-13T10:05:00Z"
@@ -279,7 +305,7 @@ Error Responses:
 - Fallback: Queue for later processing if service unavailable
 
 **Speech Transcript Input:**
-- See **§2.5** for source of truth, validation, and prompt usage.
+- See **§2.6** for source of truth, validation, and prompt usage.
 - Summary: Persisted transcript segments, combined server-side by `practice_id` during `POST /api/v1/practices/{practice_id}/feedbacks`.
 - Languages: English (initial), expand later
 - Constraint: Quality depends on frontend speech recognition accuracy
@@ -314,7 +340,7 @@ Error Responses:
 
 1. **AI Service Selection:** OpenAI GPT-4 vs Anthropic Claude 3? Cost-benefit analysis needed.
 2. **Speech Transcript Quality:** Is browser speech recognition accuracy sufficient for all supported browsers in V1?
-3. **Feedback Scoring:** 0-100 numerical score required or optional? Display to user or internal only?
+3. **Feedback Scoring evolution:** Should future versions expose numeric score in UI, or keep label+color-only permanently?
 
 ---
 
@@ -325,7 +351,10 @@ Error Responses:
 - 21. User submits with spoken explanation → Feedback incorporates transcript-based evaluation
 - 22. LLM service fails → Graceful error message, retry option
 - 23. User edits and resubmits → New feedback generated, old preserved in DB
-- 24. Feedback includes score → Score displayed prominently
+- 24. Feedback response includes `grade_label` and `grade_color` on every successful feedback generation
+- 25. UI shows performance using label+color only (numeric score is not displayed)
+- 26. Grade boundary mapping is correct: `19->Needs Improvement`, `20->Below Expectations`, `39->Below Expectations`, `40->Developing`, `59->Developing`, `60->Good`, `79->Good`, `80->Strong`, `100->Strong`
+- 27. If score/grade derivation fails, backend returns `500` and does not persist a partial `PracticeFeedback` row
 
 **Edge Cases:**
 - 28. Very long feedback text → Scrollable, properly formatted
