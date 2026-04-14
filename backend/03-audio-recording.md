@@ -8,7 +8,7 @@ The core behavior is:
 - Every Stop persists one ordered transcript segment.
 - Backend maintains a merged **`combined_transcript`** and cumulative **`total_duration_seconds`**.
 - In V1, **`combined_transcript`** and **`total_duration_seconds`** are derived values computed from ordered transcript segments, and are not stored as dedicated aggregate columns.
-- On Get Feedback, backend computes merged transcript from persisted transcript segments using `practice_id` in `POST /api/v1/practice`.
+- On Get Feedback, backend computes merged transcript from persisted transcript segments using `practice_id` in `POST /api/v1/practices/{practice_id}/feedbacks`.
 
 All endpoints are versioned under `v1` and are served by the same Spring Boot service.
 
@@ -21,7 +21,7 @@ All endpoints are versioned under `v1` and are served by the same Spring Boot se
 - Persist transcript segments per `practice`.
 - Return updated merged transcript and cumulative duration after each segment save.
 - Expose transcript state when loading a practice so users can continue speaking later.
-- Define how merged transcript is computed in `POST /api/v1/practice` for AI feedback.
+- Define how merged transcript is computed in `POST /api/v1/practices/{practice_id}/feedbacks` for AI feedback.
 
 ### 1.2 Out of scope
 
@@ -32,7 +32,7 @@ All endpoints are versioned under `v1` and are served by the same Spring Boot se
 ### 1.3 Integration contract
 
 - Audio Recording API provides `combined_transcript` and `total_duration_seconds`.
-- `POST /api/v1/practice` uses server-side transcript segment aggregation as source of truth.
+- `POST /api/v1/practices/{practice_id}/feedbacks` uses server-side transcript segment aggregation as source of truth.
 - AI feedback generation uses `combined_transcript` as prompt input.
 
 ### 1.4 Practice discovery and create-or-get (session-scoped)
@@ -234,7 +234,7 @@ Returns current speech capture state so the frontend can restore prior work and 
 
 ---
 
-## 5. Get Feedback Integration (`POST /api/v1/practice`)
+## 5. Get Feedback Integration (`POST /api/v1/practices/{practice_id}/feedbacks`)
 
 ### 5.1 Required behavior
 
@@ -242,9 +242,6 @@ When the user clicks Get Feedback, backend computes merged speech context from p
 
 ```json
 {
-  "practice_id": 123,
-  "practice_main_id": 456,
-  "question_id": 789,
   "whiteboard_content": {}
 }
 ```
@@ -252,8 +249,9 @@ When the user clicks Get Feedback, backend computes merged speech context from p
 - Backend must derive `combined_transcript` from **all saved segments** for that practice in order.
 - Backend must derive `total_duration_seconds` from the same persisted segment set.
 - Backend AI prompt construction uses server-derived merged transcript.
-- Client must not send `combined_transcript` or `total_duration_seconds` in `POST /api/v1/practice`.
+- Client must not send `combined_transcript` or `total_duration_seconds` in `POST /api/v1/practices/{practice_id}/feedbacks`.
 - If client-provided transcript aggregate fields are present, backend should reject the request with `400 Bad Request`.
+- Optional `Idempotency-Key` header is supported to dedupe accidental duplicate feedback submissions within a short window.
 
 ### 5.2 Multiple recordings semantics
 
@@ -270,7 +268,7 @@ When the user clicks Get Feedback, backend computes merged speech context from p
 | Empty `transcript_text` | 400 | Validation failure; optional `details` entry for field. |
 | `duration_seconds` missing/invalid | 400 | Validation failure. |
 | Cumulative duration exceeds 600s | 400 | Return clear limit-exceeded message. |
-| `POST /api/v1/practice` includes `combined_transcript` or `total_duration_seconds` | 400 | Transcript aggregates are backend-owned and must not be provided by client. |
+| `POST /api/v1/practices/{practice_id}/feedbacks` includes `combined_transcript` or `total_duration_seconds` | 400 | Transcript aggregates are backend-owned and must not be provided by client. |
 | Invalid or missing `practice_id` | 404 | Practice not found. |
 | Unauthorized practice access | 403 | When auth is available/enforced. |
 | Unexpected server/database error | 500 | Global exception fallback. |
@@ -286,7 +284,7 @@ When the user clicks Get Feedback, backend computes merged speech context from p
 5. Frontend calls `POST /api/v1/practice/{practice_id}/transcript-segments`.
 6. Backend returns updated `total_duration_seconds` and `combined_transcript`; update **“Your answer”** from the response (or refetch §1.4 GET).
 7. User may click Continue Speaking and repeat steps 4-6 multiple times.
-8. On Get Feedback, frontend submits `practice_id` and whiteboard payload in `POST /api/v1/practice`; backend computes transcript aggregates.
+8. On Get Feedback, frontend submits `practice_id` and whiteboard payload in `POST /api/v1/practices/{practice_id}/feedbacks`; backend computes transcript aggregates.
 9. Frontend should show a non-blocking warning when the current segment crosses 3 minutes.
 10. Frontend should stop active recording when cumulative speaking duration reaches 10 minutes; backend still enforces the 600-second cap.
 11. Submission is not blocked for missing transcript in V1.
@@ -301,7 +299,7 @@ No transcript segment delete/edit is provided in V1; users only append and submi
 
 ### 8.1 Last transcript segment may be omitted if Get Feedback races segment save
 
-**Problem.** `POST /api/v1/practice` builds `combined_transcript` and `total_duration_seconds` from **persisted** transcript segments only. If the user triggers Get Feedback while the final `POST /api/v1/practice/{practice_id}/transcript-segments` is still in flight (or has not yet been sent after Stop), that last segment is not in storage yet and is **excluded** from AI evaluation. The user may see no error because V1 does not require a transcript to submit (see §7, item 10).
+**Problem.** `POST /api/v1/practices/{practice_id}/feedbacks` builds `combined_transcript` and `total_duration_seconds` from **persisted** transcript segments only. If the user triggers Get Feedback while the final `POST /api/v1/practice/{practice_id}/transcript-segments` is still in flight (or has not yet been sent after Stop), that last segment is not in storage yet and is **excluded** from AI evaluation. The user may see no error because V1 does not require a transcript to submit (see §7, item 10).
 
 **Why frontend-only gating is incomplete.** Disabling Get Feedback until the segment-save response returns reduces the race for the common single-tab flow but does not fully guarantee correctness under duplicate requests, retries, multiple tabs, or clock-skewed ordering; the durable guarantee belongs on the server if we need strict “all segments before feedback.”
 
@@ -311,7 +309,7 @@ No transcript segment delete/edit is provided in V1; users only append and submi
 |----------|------|--------|
 | UX / client | Frontend | Do not enable Get Feedback until the latest segment upload completes successfully (after each Stop). Treat as best-effort reduction of the race, not a proof. |
 | API / server (future) | Backend | Introduce an explicit recording lifecycle (e.g. finalize or “ready for feedback” state) so feedback submission is rejected or deferred until the server has acknowledged all expected segments or the client has completed a finalize step. |
-| API / server (future) | Backend | Optional precondition on `POST /api/v1/practice` (e.g. expected last `segment_order` or version) to detect mismatch and return `409 Conflict` with a clear message. |
+| API / server (future) | Backend | Optional precondition on `POST /api/v1/practices/{practice_id}/feedbacks` (e.g. expected last `segment_order` or version) to detect mismatch and return `409 Conflict` with a clear message. |
 
 This issue is **documented** for V1; resolving it fully may require contract changes beyond the current append-only segment + immediate feedback flow.
 
@@ -322,5 +320,5 @@ This issue is **documented** for V1; resolving it fully may require contract cha
 - Supports multiple recording cycles per question via append-only transcript segments.
 - Maintains deterministic merged `combined_transcript` for AI feedback.
 - Uses **`GET` / `POST` `/api/v1/practice-main/{practice_main_id}/practices`** for question-scoped load and create-or-get, plus **`POST /api/v1/practice/{practice_id}/transcript-segments`** and optional **`GET /api/v1/practice/{practice_id}`**.
-- Uses server-side transcript aggregation as source of truth during `POST /api/v1/practice`.
+- Uses server-side transcript aggregation as source of truth during `POST /api/v1/practices/{practice_id}/feedbacks`.
 - Aligns with product PRD recording behavior and AI Feedback request contract.

@@ -55,11 +55,12 @@ As a user, when I click "Get Feedback", the system should save my whiteboard con
 
 **API Request:**
 ```
-POST /api/v1/practice
+POST /api/v1/practices/{practice_id}/feedbacks
+Headers:
+- Idempotency-Key: <optional UUID/string>
+
+Request Body:
 {
-  "practice_id": 123 (if updating existing),
-  "practice_main_id": 456,
-  "question_id": 789,
   "whiteboard_content": { /* JSONB structure */ }
 }
 ```
@@ -184,7 +185,7 @@ This subsection ties **Get Feedback** to **session chrome** (progress dots) and 
 
 **Source of truth:** **`combined_transcript`** and duration aggregates for the LLM are derived only from persisted **`PracticeTranscriptSegment`** rows for the submit **`practice_id`**, as specified in [Audio Recording](03-audio-recording.md) and [Audio Recording – Backend](backend/03-audio-recording.md).
 
-**Server responsibility:** The backend loads segments in **`segment_order`**, applies the same concatenation and duration rules used elsewhere (e.g. validation endpoints), and builds the transcript block for the evaluation prompt. The client **must not** send **`combined_transcript`** or **`total_duration_seconds`** on **`POST /api/v1/practice`** (see §4.1); the server does not treat ad-hoc client transcript fields as authoritative when they bypass persisted segments.
+**Server responsibility:** The backend loads segments in **`segment_order`**, applies the same concatenation and duration rules used elsewhere (e.g. validation endpoints), and builds the transcript block for the evaluation prompt. The client **must not** send **`combined_transcript`** or **`total_duration_seconds`** on **`POST /api/v1/practices/{practice_id}/feedbacks`** (see §4.1); the server does not treat ad-hoc client transcript fields as authoritative when they bypass persisted segments.
 
 **Validation before LLM:**
 
@@ -218,16 +219,14 @@ flowchart TD
 
 ## 4. API Specification
 
-### 4.1 Submit/Update Practice
+### 4.1 Submit Feedback (Create `PracticeFeedback`)
 
 ```
-POST /api/v1/practice
+POST /api/v1/practices/{practice_id}/feedbacks
+Idempotency-Key: <optional UUID/string>
 
 Request Body:
 {
-  "practice_id": 789 (optional - if updating existing),
-  "practice_main_id": 123,
-  "question_id": 1,
   "whiteboard_content": {
     "section_1": {
       "type": "diagram",
@@ -241,12 +240,12 @@ Request Body:
 Notes:
 - Client must not send `combined_transcript` or `total_duration_seconds` in this request.
 - Backend computes transcript aggregates from persisted transcript segments by `practice_id` (full contract: **§2.5**).
+- `practice_id` is the canonical per-question row obtained via `GET/POST /api/v1/practice-main/{practice_main_id}/practices`.
+- `Idempotency-Key` is optional. When present, duplicate requests with the same key from the same caller within a short dedupe window should return the original successful response instead of creating an additional `PracticeFeedback`.
 
 Response (200 OK):
 {
   "practice_id": 789,
-  "practice_main_id": 123,
-  "question_id": 1,
   "feedback": {
     "practice_feedback_id": 999,
     "feedback_text": "Your solution demonstrates...",
@@ -258,8 +257,16 @@ Response (200 OK):
 
 Error Responses:
 - 400 Bad Request (validation failed)
+- 404 Not Found (invalid `practice_id`)
+- 409 Conflict (same `Idempotency-Key` reused with different payload)
 - 500 Internal Server Error
 ```
+
+### 4.2 Deprecation note (`POST /api/v1/practice`)
+
+- `POST /api/v1/practice` is deprecated.
+- Use `POST /api/v1/practice-main/{practice_main_id}/practices` for idempotent create-or-get of canonical `practice_id`.
+- Use `POST /api/v1/practices/{practice_id}/feedbacks` to generate and persist `PracticeFeedback`.
 
 ---
 
@@ -273,7 +280,7 @@ Error Responses:
 
 **Speech Transcript Input:**
 - See **§2.5** for source of truth, validation, and prompt usage.
-- Summary: Persisted transcript segments, combined server-side by `practice_id` during `POST /api/v1/practice`.
+- Summary: Persisted transcript segments, combined server-side by `practice_id` during `POST /api/v1/practices/{practice_id}/feedbacks`.
 - Languages: English (initial), expand later
 - Constraint: Quality depends on frontend speech recognition accuracy
 

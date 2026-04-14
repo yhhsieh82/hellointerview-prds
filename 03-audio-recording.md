@@ -70,7 +70,7 @@ As a user answering High Level Design or Deep Dive questions, I want to speak my
 5. POST /api/v1/practice/{practice_id}/transcript-segments
 6. Backend stores transcript_text, duration_seconds, segment_order
 7. Backend returns updated total_duration_seconds and combined_transcript; refresh "Your answer"
-8. On Get Feedback (`POST /api/v1/practice`), backend computes merged transcript from stored transcript segments by `practice_id`
+8. On Get Feedback (`POST /api/v1/practices/{practice_id}/feedbacks`), backend computes merged transcript from stored transcript segments by `practice_id`
 ```
 
 **Empty states (testable):**

@@ -258,7 +258,7 @@ erDiagram
 }
 ```
 
-For questions that require spoken explanation, `Practice` rows MAY be created before final feedback submission (e.g. via **`POST /api/v1/practice-main/{practice_main_id}/practices`**) so transcript segments can be persisted across browser sessions. For other question types, `Practice` rows are typically created or updated on explicit Get Feedback submit. Autosave of diagram content continues to operate on `PracticeMain.whiteboard_content` and does **not** create `Practice` rows; see Practice Session Management and Whiteboard backend PRDs.
+For questions that require spoken explanation, `Practice` rows MAY be created before final feedback submission (e.g. via **`POST /api/v1/practice-main/{practice_main_id}/practices`**) so transcript segments can be persisted across browser sessions. For other question types, clients should still use the same create-or-get API to obtain canonical `practice_id`, then submit feedback via **`POST /api/v1/practices/{practice_id}/feedbacks`**. Autosave of diagram content continues to operate on `PracticeMain.whiteboard_content` and does **not** create `Practice` rows; see Practice Session Management and Whiteboard backend PRDs.
 
 **Whiteboard Content Structure (PracticeMain.whiteboard_content):**
 ```json

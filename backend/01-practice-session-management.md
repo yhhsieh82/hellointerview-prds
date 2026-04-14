@@ -509,8 +509,17 @@ Content-Type: application/json
 
 - **Speech capture / question load**
   - To load persisted transcript and `practice_id` for a question: **`GET /api/v1/practice-main/{practice_main_id}/practices?question_id={id}`** (§5). If **404**, call **`POST /api/v1/practice-main/{practice_main_id}/practices`** with `{ "question_id" }` (§6), then use returned `practice_id` for segment uploads.
+  - Feedback creation is separate from create-or-get: call **`POST /api/v1/practices/{practice_id}/feedbacks`** to generate and persist a `PracticeFeedback` row.
 
 - **Complete and Review Flow**
   - On “Complete and Review”, call `PATCH /api/v1/practice-main/{id}` with `{ "status": "completed" }`.
   - Use the returned `status` and `completed_at` to drive navigation to the review page, as specified in the Review PRD (`resource/prds/05-review-history.md`).
+
+---
+
+## 8. Deprecation note (`POST /api/v1/practice`)
+
+- `POST /api/v1/practice` is deprecated.
+- Use `POST /api/v1/practice-main/{practice_main_id}/practices` as the idempotent create-or-get API for canonical `practice_id`.
+- Use `POST /api/v1/practices/{practice_id}/feedbacks` for submit-for-feedback.
 
