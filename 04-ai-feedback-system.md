@@ -13,11 +13,11 @@ See [Foundation PRD](00-foundation.md) for data models and infrastructure. Uses 
 
 ## 1. Feature Overview
 
-The AI Feedback System enables users to receive AI-generated evaluation and feedback on their system design practice submissions. When a user completes their whiteboard diagram (and spoken explanation transcript for High Level Design and Deep Dive questions) and clicks "Get Feedback", the system:
+The AI Feedback System enables users to receive AI-generated evaluation and feedback on their system design practice submissions. When a user completes their work and clicks "Get Feedback", the system:
 
 1. Validates the submission (whiteboard content required; spoken explanation optional in V1)
-2. Saves the practice to the backend
-3. Transforms diagram JSON to structured text for LLM consumption
+2. Resolves canonical persisted practice state from the backend (`PracticeMain.whiteboard_content` + transcript segments for `practice_id`)
+3. Transforms persisted diagram JSON to structured text for LLM consumption
 4. Constructs an evaluation prompt with question context, diagram description, and combined spoken transcript
 5. Sends the prompt to an LLM API (OpenAI/Anthropic)
 6. Parses and stores the feedback
@@ -37,7 +37,7 @@ The system supports edit-and-resubmit workflows: users can improve their answers
 **Priority:** P0 (Must Have)
 
 **User Story:**  
-As a user, when I click "Get Feedback", the system should save my whiteboard content and spoken explanation transcript, then return AI-generated feedback.
+As a user, when I click "Get Feedback", the system should use my latest persisted whiteboard content and spoken transcript (if any), then return AI-generated feedback.
 
 **Acceptance Criteria:**
 - Validation:
@@ -45,7 +45,7 @@ As a user, when I click "Get Feedback", the system should save my whiteboard con
   - Spoken explanation is optional in V1 for High Level Design/Deep Dive questions
 - On click:
   - Show loading spinner
-  - Submit practice data
+  - Trigger feedback generation for canonical `practice_id`
   - Display feedback in Feedback tab
   - Auto-switch to Feedback tab
 - Feedback includes:
@@ -60,9 +60,7 @@ Headers:
 - Idempotency-Key: <optional UUID/string>
 
 Request Body:
-{
-  "whiteboard_content": { /* JSONB structure */ }
-}
+{}
 ```
 
 **API Response:**
@@ -85,15 +83,17 @@ Request Body:
 
 **Process:**
 1. Backend receives practice submission
-2. Transform diagram JSON to structured text description
-3. Construct LLM prompt with:
+2. Resolve whiteboard source from `PracticeMain.whiteboard_content` using `practice_id -> question_id -> whiteboard_section`
+3. Resolve transcript source from persisted `PracticeTranscriptSegment` rows for `practice_id`
+4. Transform persisted diagram JSON to structured text description
+5. Construct LLM prompt with:
    - Question context
    - Diagram description
    - Combined spoken transcript (server-derived from persisted transcript segments—see **§2.6**)
    - Evaluation criteria
-4. Send to LLM API (OpenAI/Anthropic)
-5. Parse and store feedback
-6. Return to frontend
+6. Send to LLM API (OpenAI/Anthropic)
+7. Parse and store feedback
+8. Return to frontend
 
 **Diagram to Text Transformation:**
 ```python
@@ -203,7 +203,15 @@ This subsection ties **Get Feedback** to **session chrome** (progress dots) and 
 
 **Backend alignment:** Introducing the active **`practice_feedback`** table (per [Foundation](00-foundation.md)), returning **`question_ids_with_feedback`** on **GET practice-main** (replacing any interim **`question_ids_with_practices`**-style field), and **archiving feedback to `practice_feedback_history` on session complete** are **in scope for this feature’s implementation**—not a separate “progress-only” milestone. They ship together with persisting **`PracticeFeedback`** on Get Feedback.
 
-### 2.6 Spoken transcript as server-side LLM input
+### 2.6 Server-side source of truth for LLM inputs (diagram + transcript)
+
+**Unified contract:** The feedback endpoint follows the same source-of-truth rule for both entities:
+
+- Diagram input is loaded server-side from persisted **`PracticeMain.whiteboard_content`** for the submit `practice_id`'s section.
+- Transcript input is loaded server-side from persisted **`PracticeTranscriptSegment`** rows for the same `practice_id`.
+- Client payload on **`POST /api/v1/practices/{practice_id}/feedbacks`** is metadata-only in V1 (no diagram or transcript content fields).
+
+**Whiteboard source of truth:** The backend resolves `practice_id -> question_id`, maps `question_id -> whiteboard_section`, then reads that section from `PracticeMain.whiteboard_content` and converts it to prompt text. Ad-hoc client-sent diagram content is not authoritative for feedback generation.
 
 **Source of truth:** **`combined_transcript`** and duration aggregates for the LLM are derived only from persisted **`PracticeTranscriptSegment`** rows for the submit **`practice_id`**, as specified in [Audio Recording](03-audio-recording.md) and [Audio Recording – Backend](backend/03-audio-recording.md).
 
@@ -214,7 +222,7 @@ This subsection ties **Get Feedback** to **session chrome** (progress dots) and 
 - For questions with **`requires_spoken_explanation`**: enforce segment presence and quality per the Audio PRDs before calling the LLM (reject or return **400** with a clear message when requirements are not met).
 - For optional spoken explanation (V1): if there are no segments, the prompt uses an **empty or explicitly optional** transcript slot as defined in the prompt template.
 
-**Prompt contract:** Every evaluation prompt includes question context, diagram-derived text (from the submitted whiteboard payload), and a **combined transcript** section. That section may be empty when speech is optional; it must still appear in the template so the model’s instructions stay stable.
+**Prompt contract:** Every evaluation prompt includes question context, diagram-derived text (from server-resolved persisted whiteboard state), and a **combined transcript** section. That section may be empty when speech is optional; it must still appear in the template so the model’s instructions stay stable.
 
 ---
 
@@ -248,19 +256,12 @@ POST /api/v1/practices/{practice_id}/feedbacks
 Idempotency-Key: <optional UUID/string>
 
 Request Body:
-{
-  "whiteboard_content": {
-    "section_1": {
-      "type": "diagram",
-      "version": "1.0",
-      "elements": [...]
-    },
-    ...
-  }
-}
+{}
 
 Notes:
+- Client must not send `whiteboard_content` in this request.
 - Client must not send `combined_transcript` or `total_duration_seconds` in this request.
+- Backend computes diagram input from persisted `PracticeMain.whiteboard_content` using the submit `practice_id` and question section mapping (full contract: **§2.6**).
 - Backend computes transcript aggregates from persisted transcript segments by `practice_id` (full contract: **§2.6**).
 - `practice_id` is the canonical per-question row obtained via `GET/POST /api/v1/practice-main/{practice_main_id}/practices`.
 - `Idempotency-Key` is optional. When present, duplicate requests with the same key from the same caller within a short dedupe window should return the original successful response instead of creating an additional `PracticeFeedback`.
