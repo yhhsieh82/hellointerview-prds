@@ -42,6 +42,10 @@ Canonical API definitions live in [Practice Session Management – Backend APIs]
 - **`GET /api/v1/practice-main/{practice_main_id}/practices?question_id={question_id}`** — primary way to load transcript state and `practice_id` when the user opens a question (see §5 there).
 - **`POST /api/v1/practice-main/{practice_main_id}/practices`** with `{ "question_id" }` — idempotent create-or-get when **GET** returned **404** and the user needs a `practice_id` before the first segment upload (see §6 there).
 
+**Data constraint dependency:** These APIs depend on active-table uniqueness **`UNIQUE (practice_main_id, question_id)`** so transcript segments remain append-only under one canonical `practice_id` per question in a session.
+
+**Reasoning:** Without this constraint, duplicate active `Practice` rows could split transcript ownership for the same question, producing non-deterministic merged transcript inputs for `POST /api/v1/practices/{practice_id}/feedbacks`.
+
 **`GET /api/v1/practice/{practice_id}`** (§4 below) remains valid when the client already has `practice_id`.
 
 ---

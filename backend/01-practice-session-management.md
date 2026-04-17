@@ -13,6 +13,23 @@ All endpoints are versioned under `v1` and are served by the same Spring Boot se
 
 ## 1. Common Models
 
+### 1.0 Data integrity constraint (authoritative)
+
+For active rows, `practice` MUST enforce:
+
+```sql
+UNIQUE (practice_main_id, question_id)
+```
+
+Constraint intent:
+
+- Guarantees exactly one canonical `practice_id` per question within a `PracticeMain`.
+- Makes `GET /api/v1/practice-main/{practice_main_id}/practices?question_id=...` deterministic (0 or 1 row, never many).
+- Makes `POST /api/v1/practice-main/{practice_main_id}/practices` truly idempotent under concurrent create races.
+- Preserves product semantics where resubmits append `PracticeFeedback` rows instead of creating duplicate active `Practice` rows.
+
+This uniqueness requirement applies to the active `practice` table; history/archive tables are out of scope for this specific constraint.
+
 ### 1.1 `PracticeMainResponseDto` (GET Response)
 
 Returned by `GET /api/v1/practice-main`:

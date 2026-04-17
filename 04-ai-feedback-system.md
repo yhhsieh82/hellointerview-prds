@@ -163,6 +163,10 @@ After receiving feedback, I want to improve my answer and get new feedback.
 - Feedback history preserved in database
 - UI shows latest feedback only
 
+**Data constraint (active rows):** The active `practice` table must enforce **`UNIQUE (practice_main_id, question_id)`** so each question in a session maps to exactly one canonical `practice_id`.
+
+**Reasoning:** Transcript segments are append-only and are keyed by `practice_id`, while whiteboard state is canonical on `PracticeMain.whiteboard_content`. Reusing one canonical `practice_id` per question prevents fragmented transcript ownership, keeps autosave/feedback source-of-truth resolution deterministic, and allows resubmits to append history in `PracticeFeedback` instead of duplicating active `Practice` rows.
+
 ### 2.4 Feedback score grading model (label + color only)
 
 The backend computes a numeric score (`0-100`) for each generated feedback and deterministically maps it to a grade label and semantic color token. The frontend displays **label + color only** for performance state and must not display the numeric score in V1.
@@ -264,6 +268,7 @@ Notes:
 - Backend computes diagram input from persisted `PracticeMain.whiteboard_content` using the submit `practice_id` and question section mapping (full contract: **§2.6**).
 - Backend computes transcript aggregates from persisted transcript segments by `practice_id` (full contract: **§2.6**).
 - `practice_id` is the canonical per-question row obtained via `GET/POST /api/v1/practice-main/{practice_main_id}/practices`.
+- Active-row invariant: backend relies on **`UNIQUE (practice_main_id, question_id)`** on `practice` so create-or-get returns a single canonical row for a question in a session.
 - `Idempotency-Key` is optional. When present, duplicate requests with the same key from the same caller within a short dedupe window should return the original successful response instead of creating an additional `PracticeFeedback`.
 - Backend must return `grade_label` and `grade_color` for every successful feedback generation.
 - Frontend performance display in V1 must use `grade_label` + `grade_color` only (do not render numeric score).
