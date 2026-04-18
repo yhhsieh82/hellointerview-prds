@@ -257,7 +257,7 @@ flowchart TD
 
 ```
 POST /api/v1/practices/{practice_id}/feedbacks
-Idempotency-Key: <optional UUID/string>
+Idempotency-Key: <UUID/string>
 
 Request Body:
 {}
@@ -291,8 +291,54 @@ Error Responses:
 - 400 Bad Request (validation failed)
 - 404 Not Found (invalid `practice_id`)
 - 409 Conflict (same `Idempotency-Key` reused with different payload)
+- 503 Service Unavailable (optional `Retry-After`): feedback generation already in progress for this idempotency key (`code`: `feedback_in_progress`)
 - 500 Internal Server Error
 ```
+
+#### 4.1.1 Idempotency: client key, server state, and why `practice_id` is not the key
+
+**Client-generated key (recommended):** On each distinct **Get Feedback** intent, the client generates a new UUID (v4), e.g. `crypto.randomUUID()`, and sends it as `Idempotency-Key`. **All transport retries for that same intent** (timeouts, flaky networks) must reuse the **same** header value and the **same** `practice_id`. A **new** user click after edits uses a **new** UUID so the server may append another `PracticeFeedback` row for the same canonical `practice_id`.
+
+**Why not use `practice_id` as the idempotency key:** `practice_id` identifies the per-question canonical row for the whole session, while idempotency keys identify **one submit attempt**. Reusing `practice_id` alone would incorrectly dedupe legitimate **resubmits** (multiple feedback rows per `practice_id`).
+
+**Caller scope:** Idempotency rows are scoped to **`(user_id, idempotency_key)`** where `user_id` is the owner of the `PracticeMain` for the submitted `practice_id` (Phase 1: derived server-side from `practice_id → practice_main.user_id`; later from JWT). Duplicate keys from a different user are a different namespace.
+
+**Payload binding (409 semantics):** The server binds each idempotency record to the submitted **`practice_id`** and to an **`input_fingerprint`** derived from server-side persisted inputs used for the LLM (whiteboard section for the practice_main's `whiteboard_section`, plus ordered transcript segment identity). If the same `(user_id, idempotency_key)` is reused with a **different** `practice_id`, or with a **different fingerprint** while a prior outcome is not eligible for retry, the API returns **409 Conflict** (matches the high-level contract above).
+
+#### 4.1.2 Durable idempotency state (cannot be one DB transaction with the LLM)
+
+The LLM call is external I/O and **must not** sit inside a single long database transaction. Correctness uses a **small durable state machine** on a table such as `practice_feedback_request` (name implementation-defined):
+
+| Status | Meaning |
+|--------|---------|
+| `CLAIMED` | Idempotency key reserved; LLM not yet completed successfully. |
+| `COMPLETED` | `PracticeFeedback` persisted; response is replayable. |
+| `FAILED` | Terminal failure without a persisted `PracticeFeedback` for this attempt (e.g. LLM timeout). |
+
+**Atomic steps (local DB only):**
+
+1. **Claim:** `INSERT` idempotency row `CLAIMED` with `user_id`, `idempotency_key`, `practice_id`, `input_fingerprint`, `expires_at` — enforced unique by **`UNIQUE (user_id, idempotency_key)`**. Commit before calling the LLM so crashes still leave a claim for retries.
+2. **Finalize:** In a separate transaction, `INSERT PracticeFeedback`, then `UPDATE` idempotency row to `COMPLETED` with `practice_feedback_id` (and optional cached response).
+
+**Replay:** A second request with the same key sees `COMPLETED` and returns the **same HTTP 200 body** without a second LLM call.
+
+**In-flight:** A second request with the same key while status is `CLAIMED` (same fingerprint) returns **503** with `code: feedback_in_progress` and optional `Retry-After` (client may backoff-retry the **same** POST).
+
+**Stuck `CLAIMED`:** If a row remains `CLAIMED` longer than a **stale threshold** (implementation default, e.g. 15 minutes) without `COMPLETED`, the server may transition it to **`FAILED`** with `error_code` such as `claim_abandoned` so a retry with the **same** key and **same** fingerprint can start a new attempt (re-enters `CLAIMED` on that row or supersedes per implementation). This avoids permanently blocking retries after process crashes.
+
+**`FAILED` + retry (recommended UX):** When status is `FAILED` and the fingerprint still matches the current persisted server inputs, a retry with the **same** `Idempotency-Key` may **re-run** the LLM (second chance after timeout) without requiring a new UUID.
+
+#### 4.1.3 Timeouts: LLM vs client-to-API
+
+**Server → LLM timeout:** The outbound HTTP client aborts waiting on the provider. The idempotency row moves from `CLAIMED` to **`FAILED`** with `error_code` such as `llm_timeout`; **no** `PracticeFeedback` row is written. The HTTP status for the first call is typically **503** (or **504**) with a clear message. Retries with the same key follow **§4.1.2** `FAILED` policy.
+
+**Client → API timeout:** The client may see no response while the server is still `CLAIMED`. Retrying the **same** POST with the same key either receives **200** replay once the first attempt reaches `COMPLETED`, or **503** `feedback_in_progress` while still `CLAIMED`.
+
+**Late LLM completion after local abort:** If the server has already treated the attempt as failed due to an outbound timeout, **late** provider results must be **discarded** (V1 pragmatic tradeoff; optional provider cancellation if available).
+
+#### 4.1.4 Dedupe window and storage
+
+Each idempotency row carries an **`expires_at`** (e.g. 72 hours after creation). After expiry, the row is no longer used for replay; clients must use a **new** key for a new attempt if they still need deduplication beyond that window.
 
 ### 4.2 Deprecation note (`POST /api/v1/practice`)
 

@@ -538,5 +538,7 @@ Content-Type: application/json
 
 - `POST /api/v1/practice` is deprecated.
 - Use `POST /api/v1/practice-main/{practice_main_id}/practices` as the idempotent create-or-get API for canonical `practice_id`.
-- Use `POST /api/v1/practices/{practice_id}/feedbacks` for submit-for-feedback.
+- Use `POST /api/v1/practices/{practice_id}/feedbacks` for submit-for-feedback (empty JSON body; optional `Idempotency-Key` header; server derives diagram + transcript per [AI Feedback PRD](../04-ai-feedback-system.md) **§4.1**).
+
+**Backend behavior (idempotency):** Durable `practice_feedback_request` row with `UNIQUE (user_id, idempotency_key)`, states `CLAIMED` / `COMPLETED` / `FAILED`, replay on `COMPLETED`, `503` + `code: feedback_in_progress` while `CLAIMED`, stale abandoned claims, and `FAILED` + same key + same input fingerprint may re-run LLM — see [AI Feedback PRD](../04-ai-feedback-system.md) **§4.1.1–4.1.3**.
 
