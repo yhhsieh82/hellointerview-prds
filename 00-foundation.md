@@ -315,7 +315,7 @@ For questions that require spoken explanation, `Practice` rows MAY be created be
 
 **API projection note:** Feedback APIs may include derived presentation fields in response payloads, such as `grade_label` and `grade_color`, mapped from `score` by deterministic band rules in the AI Feedback PRD. These derived fields are API contract fields and do not require dedicated DB columns in V1.
 
-**Idempotency (optional `Idempotency-Key` on submit feedback):** Implementations SHOULD persist a separate **`practice_feedback_request`** (or equivalent) row per in-flight or completed keyed attempt, with **`UNIQUE (user_id, idempotency_key)`** on active rows, `status` (`CLAIMED` / `COMPLETED` / `FAILED`), optional `practice_feedback_id` when completed, `input_fingerprint`, and `expires_at`. Full lifecycle, timeout behavior, and HTTP replay/`503 feedback_in_progress` semantics are specified in [AI Feedback PRD](04-ai-feedback-system.md) **§4.1.1–4.1.3**.
+**Idempotency (required `Idempotency-Key` on submit feedback):** Implementations SHOULD persist a separate **`practice_feedback_request`** (or equivalent) row per in-flight or completed keyed attempt, with **`UNIQUE (user_id, idempotency_key)`** on active rows, `status` (`CLAIMED` / `COMPLETED` / `FAILED`), optional `practice_feedback_id` when completed, `input_fingerprint`, and `expires_at`. The submit endpoint MUST reject missing or blank keys with **400**. Full lifecycle, timeout behavior, and HTTP replay/`503 feedback_in_progress` semantics are specified in [AI Feedback PRD](04-ai-feedback-system.md) **§4.1.1–4.1.3** and the [AI Feedback backend spec](backend/04-ai-feedback-system.md).
 
 #### History Tables
 ```sql

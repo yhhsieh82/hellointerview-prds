@@ -3,7 +3,7 @@
 **Document Type:** Feature Product Requirements Document  
 **Feature:** AI Feedback Generation for Practice Submissions  
 
-See [Foundation PRD](00-foundation.md) for data models and infrastructure. Uses output from [Audio Recording](03-audio-recording.md).
+See [Foundation PRD](00-foundation.md) for data models and infrastructure. Uses output from [Audio Recording](03-audio-recording.md). **Backend specification (implementation contract):** [AI Feedback System – Backend](backend/04-ai-feedback-system.md).
 
 **Version:** 2.1  
 **Date:** April 14, 2026  
@@ -57,7 +57,7 @@ As a user, when I click "Get Feedback", the system should use my latest persiste
 ```
 POST /api/v1/practices/{practice_id}/feedbacks
 Headers:
-- Idempotency-Key: <optional UUID/string>
+- Idempotency-Key: <required UUID/string; non-empty after trim, max 128 characters>
 
 Request Body:
 {}
@@ -253,11 +253,13 @@ flowchart TD
 
 ## 4. API Specification
 
+Engineering details (persistence, idempotency state machine, error codes, progress): [AI Feedback System – Backend](backend/04-ai-feedback-system.md).
+
 ### 4.1 Submit Feedback (Create `PracticeFeedback`)
 
 ```
 POST /api/v1/practices/{practice_id}/feedbacks
-Idempotency-Key: <UUID/string>
+Idempotency-Key: <required UUID/string; non-empty after trim, max 128 characters>
 
 Request Body:
 {}
@@ -269,7 +271,7 @@ Notes:
 - Backend computes transcript aggregates from persisted transcript segments by `practice_id` (full contract: **§2.6**).
 - `practice_id` is the canonical per-question row obtained via `GET/POST /api/v1/practice-main/{practice_main_id}/practices`.
 - Active-row invariant: backend relies on **`UNIQUE (practice_main_id, question_id)`** on `practice` so create-or-get returns a single canonical row for a question in a session.
-- `Idempotency-Key` is optional. When present, duplicate requests with the same key from the same caller within a short dedupe window should return the original successful response instead of creating an additional `PracticeFeedback`.
+- `Idempotency-Key` is **required** on every submit. The server returns **400** if the header is missing, blank after trim, or longer than the maximum length. Duplicate requests with the **same** key from the **same** caller (same `user_id` scope) within the dedupe window return the original successful response instead of creating an additional `PracticeFeedback`.
 - Backend must return `grade_label` and `grade_color` for every successful feedback generation.
 - Frontend performance display in V1 must use `grade_label` + `grade_color` only (do not render numeric score).
 
@@ -288,7 +290,7 @@ Response (200 OK):
 }
 
 Error Responses:
-- 400 Bad Request (validation failed)
+- 400 Bad Request (validation failed; includes missing or blank `Idempotency-Key`, empty whiteboard section, recording required with no segments, oversized idempotency key, non-empty request body)
 - 404 Not Found (invalid `practice_id`)
 - 409 Conflict (same `Idempotency-Key` reused with different payload)
 - 503 Service Unavailable (optional `Retry-After`): feedback generation already in progress for this idempotency key (`code`: `feedback_in_progress`)
@@ -297,7 +299,7 @@ Error Responses:
 
 #### 4.1.1 Idempotency: client key, server state, and why `practice_id` is not the key
 
-**Client-generated key (recommended):** On each distinct **Get Feedback** intent, the client generates a new UUID (v4), e.g. `crypto.randomUUID()`, and sends it as `Idempotency-Key`. **All transport retries for that same intent** (timeouts, flaky networks) must reuse the **same** header value and the **same** `practice_id`. A **new** user click after edits uses a **new** UUID so the server may append another `PracticeFeedback` row for the same canonical `practice_id`.
+**Client-generated key (required):** On each distinct **Get Feedback** intent, the client generates a new UUID (v4), e.g. `crypto.randomUUID()`, and sends it as `Idempotency-Key` (the header must always be present and non-empty). **All transport retries for that same intent** (timeouts, flaky networks) must reuse the **same** header value and the **same** `practice_id`. A **new** user click after edits uses a **new** UUID so the server may append another `PracticeFeedback` row for the same canonical `practice_id`.
 
 **Why not use `practice_id` as the idempotency key:** `practice_id` identifies the per-question canonical row for the whole session, while idempotency keys identify **one submit attempt**. Reusing `practice_id` alone would incorrectly dedupe legitimate **resubmits** (multiple feedback rows per `practice_id`).
 

@@ -255,7 +255,7 @@ When the user clicks Get Feedback, backend computes merged speech context from p
 - Backend AI prompt construction uses server-derived merged transcript.
 - Client must not send `combined_transcript` or `total_duration_seconds` in `POST /api/v1/practices/{practice_id}/feedbacks`.
 - If client-provided transcript aggregate fields are present, backend should reject the request with `400 Bad Request`.
-- Optional `Idempotency-Key` header is supported to dedupe accidental duplicate feedback submissions within a short window.
+- `Idempotency-Key` is **required** on `POST /api/v1/practices/{practice_id}/feedbacks` (non-empty after trim; max 128 characters) so duplicate submits and transport retries are correlatable; see [AI Feedback – Backend](04-ai-feedback-system.md).
 
 ### 5.2 Multiple recordings semantics
 
