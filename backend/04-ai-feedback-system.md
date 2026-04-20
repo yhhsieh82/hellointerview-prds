@@ -120,12 +120,15 @@ Index: `idx_practice_feedback_practice_id` on `practice_id`.
 | **409** | Idempotency conflict: wrong `practice_id` for key, expired key, fingerprint mismatch on completed/in-flight row per coordinator rules | — |
 | **503** | In-flight same key + fingerprint (`FeedbackInProgressException`) | `feedback_in_progress`; **`Retry-After`** header (seconds) |
 | **503** | LLM outbound timeout (`LlmTimeoutException`) | `llm_timeout` |
+| **500** | Non-finite LLM score at finalize, or score/grade mapping failure when building the response (product **§2.4**) — [`GradeMappingException`](../../../src/main/java/com/hellointerview/backend/exception/GradeMappingException.java) via [`GlobalExceptionHandler`](../../../src/main/java/com/hellointerview/backend/exception/GlobalExceptionHandler.java) | `grade_mapping_failed` |
 
 Error envelope: [`ErrorResponse`](../../../src/main/java/com/hellointerview/backend/exception/ErrorResponse.java) — `error`, `message`, optional `code`, optional `details`.
 
 ---
 
 ## 5. Core processing flow
+
+**Transaction boundary:** [`PracticeFeedbackService.submitFeedback`](../../../src/main/java/com/hellointerview/backend/service/PracticeFeedbackService.java) is **not** annotated with `@Transactional`. Database writes run only inside [`FeedbackIdempotencyCoordinator`](../../../src/main/java/com/hellointerview/backend/service/feedback/FeedbackIdempotencyCoordinator.java) methods, each of which opens and commits its own transaction, so the LLM step does not hold a DB transaction open.
 
 Ordered steps in **`PracticeFeedbackService.submitFeedback`**:
 
@@ -161,7 +164,8 @@ Implemented in **`FeedbackIdempotencyCoordinator`**:
 ## 6. Grading and response mapping
 
 - **Storage:** `practice_feedback.score` only.
-- **API:** [`FeedbackGradeMapper.fromScore`](../../../src/main/java/com/hellointerview/backend/service/feedback/FeedbackGradeMapper.java) produces `grade_label` and `grade_color` for [`FeedbackPayloadDto`](../../../src/main/java/com/hellointerview/backend/dto/FeedbackPayloadDto.java). Bands (floor of score): 0–19, 20–39, 40–59, 60–79, 80–100 with labels/colors defined in code (align with product **§2.4** for UX; exact strings are code-owned).
+- **Persisted score:** [`FeedbackIdempotencyCoordinator.finalizeSuccessful`](../../../src/main/java/com/hellointerview/backend/service/feedback/FeedbackIdempotencyCoordinator.java) clamps **finite** LLM scores into **[0, 100]** before insert. **NaN** / **infinite** scores throw [`GradeMappingException`](../../../src/main/java/com/hellointerview/backend/exception/GradeMappingException.java) (no `PracticeFeedback` row); [`PracticeFeedbackService`](../../../src/main/java/com/hellointerview/backend/service/PracticeFeedbackService.java) then marks the idempotency row **`FAILED`** with `error_code` **`grade_mapping_failed`** so the client may retry per the `FAILED` policy.
+- **API:** [`FeedbackGradeMapper.fromScore`](../../../src/main/java/com/hellointerview/backend/service/feedback/FeedbackGradeMapper.java) produces `grade_label` and `grade_color` for [`FeedbackPayloadDto`](../../../src/main/java/com/hellointerview/backend/dto/FeedbackPayloadDto.java). Invalid stored scores throw **`GradeMappingException`** → **500** / `grade_mapping_failed` (product **§2.4**). Bands (floor of score): 0–19, 20–39, 40–59, 60–79, 80–100 with labels/colors defined in code (align with product **§2.4** for UX; exact strings are code-owned).
 
 ---
 
@@ -170,6 +174,12 @@ Implemented in **`FeedbackIdempotencyCoordinator`**:
 **Field:** `question_ids_with_feedback` on **`GET`** practice main (see [Practice Session Management – Backend](01-practice-session-management.md)).
 
 **Implementation:** [`PracticeMainService.getQuestionIdsWithFeedback`](../../../src/main/java/com/hellointerview/backend/service/PracticeMainService.java) delegates to [`PracticeFeedbackRepository.findDistinctQuestionIdsWithFeedbackByPracticeMainId`](../../../src/main/java/com/hellointerview/backend/repository/PracticeFeedbackRepository.java) — JPQL `distinct` `question_id` for all `PracticeFeedback` whose `practice.practiceMain` matches the session. Matches product **§2.5** (dot counts feedback received, not draft-only state).
+
+### 7.1 Session complete: `practice_feedback_history`
+
+When an active session is completed ([`PracticeMainService.archiveAndDeleteActivePracticeMain`](../../../src/main/java/com/hellointerview/backend/service/PracticeMainService.java)), after **`practice_history`** rows are saved, all active **`PracticeFeedback`** rows for session practices are copied into **`practice_feedback_history`** via [`PracticeFeedbackHistoryRepository.saveAll`](../../../src/main/java/com/hellointerview/backend/repository/PracticeFeedbackHistoryRepository.java) (FK to `practice_history.practice_id` per [V5 migration](../../../src/main/resources/db/migration/V5__Create_practice_history_tables.sql)), then **`practice_main`** is deleted (CASCADE removes active practices and their feedback).
+
+**Known limitation:** There is **no** `practice_feedback_request_history` table; **`practice_feedback_request`** rows are still removed with CASCADE when the active **`practice`** row is deleted. Retry metadata for completed sessions is not retained in V1.
 
 ---
 
@@ -185,7 +195,7 @@ Implemented in **`FeedbackIdempotencyCoordinator`**:
 
 ## 9. Operational and testing notes
 
-- **Service tests:** [`PracticeFeedbackServiceTest`](../../../src/test/java/com/hellointerview/backend/service/PracticeFeedbackServiceTest.java) — claim replay, proceed/finalize, conflict, in-progress, LLM timeout + failed row, validation paths.
+- **Service tests:** [`PracticeFeedbackServiceTest`](../../../src/test/java/com/hellointerview/backend/service/PracticeFeedbackServiceTest.java) — claim replay, proceed/finalize, conflict, in-progress, LLM timeout + failed row, grade mapping failure + `markRequestFailed`, validation paths; [`PracticeMainServiceTest`](../../../src/test/java/com/hellointerview/backend/service/PracticeMainServiceTest.java) — session complete archives `PracticeFeedback` to history; [`FeedbackGradeMapperTest`](../../../src/test/java/com/hellointerview/backend/service/feedback/FeedbackGradeMapperTest.java).
 - **Controller tests:** [`PracticesControllerTest`](../../../src/test/java/com/hellointerview/backend/controller/PracticesControllerTest.java) — body rules, required header, happy path wiring with `GlobalExceptionHandler`.
 - **Local JDK 25 + Mockito:** Surefire sets **`-Dnet.bytebuddy.experimental=true`** ([`pom.xml`](../../../pom.xml)) so inline mocks work; document for maintainers running `mvn test`.
 
