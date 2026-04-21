@@ -398,7 +398,27 @@ Each idempotency row carries an **`expires_at`** (e.g. 72 hours after creation).
 
 ---
 
-## 8. Testing Scenarios
+## 8. Scalability Risks and Future Direction
+
+**Context:** The current V1 feedback flow is request/response oriented and calls the LLM during submit handling. This favors real-time UX in normal load, but long provider latency can become the dominant bottleneck as traffic increases.
+
+**Scalability risk (problem statement):**
+- Long-running LLM calls can occupy backend request capacity for extended periods, increasing tail latency and reducing stable throughput during spikes.
+- Under sustained load, delayed completions can amplify retries and degrade perceived "real-time feedback" consistency for users.
+
+**User-facing impact to monitor:**
+- Increased wait-time variance for "Get Feedback" outcomes (same action may complete quickly or significantly later).
+- Higher probability of timeout/error states during burst traffic.
+- More frequent "in progress" retry loops under contention, even with correct idempotency behavior.
+
+**Future exploration (no implementation commitment in this PRD):**
+- Evaluate when synchronous request/response should remain primary versus when overflow should transition to deferred processing.
+- Define measurable latency objectives and overload behavior (for example: target percentiles, timeout budgets, and degraded-mode UX thresholds) before locking architecture changes.
+- Define required observability to support this decision, including in-flight request age, timeout rate, retry rate, and queue/backlog indicators where applicable.
+
+---
+
+## 9. Testing Scenarios
 
 **Feedback Generation:**
 - 20. User submits practice → Feedback generated within 30 seconds
