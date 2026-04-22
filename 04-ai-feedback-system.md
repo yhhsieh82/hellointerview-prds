@@ -354,9 +354,10 @@ Each idempotency row carries an **`expires_at`** (e.g. 72 hours after creation).
 
 **LLM Service:**
 - Provider: OpenAI GPT-4 or Anthropic Claude 3
-- Timeout: 60 seconds
-- Retry: 2 attempts with exponential backoff
-- Fallback: Queue for later processing if service unavailable
+- Timeout: 60 seconds per provider call
+- Retry ownership (V1 synchronous): server-owned primary retries for transient provider failures
+- Retry policy: maximum 2 provider attempts total per submit intent, with exponential backoff and jitter
+- Client retry policy: client retries are only for transport/API uncertainty and must reuse the same `Idempotency-Key`
 
 **Speech Transcript Input:**
 - See **§2.6** for source of truth, validation, and prompt usage.
@@ -373,20 +374,25 @@ Each idempotency row carries an **`expires_at`** (e.g. 72 hours after creation).
 
 ## 6. AI Service Failures
 
-**LLM Timeout:**
-- Retry once after 30 seconds
-- If still fails: "Feedback generation is taking longer than expected. We'll email you when it's ready."
-- Queue for background processing
+### 6.1 Failure Taxonomy
 
-**LLM Service Down:**
-- Display: "Feedback service temporarily unavailable. Please try again in a few minutes."
-- Action: Save practice, allow user to continue to next question
-- Background: Retry every 5 minutes for 1 hour
+| Failure class | Examples | Retriable in V1 | Behavior |
+|---------------|----------|-----------------|----------|
+| Transient provider or transport failures | Network timeout, connection reset, provider `5xx`, provider `429` | Yes | Server performs bounded retries (max 2 attempts total). If exhausted, mark request failed and return temporary-unavailable response. |
+| Terminal client/config failures | Provider `400/422` (invalid prompt/request), provider `401/403` (auth/permission/config) | No | Mark request failed immediately (no provider retry) and return failure response. |
 
-**Invalid LLM Response:**
-- Fallback: Generic feedback based on question type
-- Log: Alert engineering team
-- Display: "Feedback generated with limited detail. Our team is working to improve this."
+### 6.2 Retry Ownership (V1)
+
+- Primary retry owner is the backend service for transient provider failures.
+- The backend must keep retries bounded to avoid request amplification and long tail latency.
+- The client may retry the API call only when response delivery is uncertain (for example client timeout/network drop), always with the same `Idempotency-Key`.
+- For explicit API failures returned by backend, client follows backend guidance (for example `503` + `Retry-After`) instead of issuing unbounded rapid retries.
+
+### 6.3 User-Facing Failure Handling
+
+- For transient failures after retry budget exhaustion: show "Feedback service temporarily unavailable. Please try again in a few minutes."
+- For in-progress duplicate submit with same idempotency key: return in-progress semantics with retry guidance.
+- For terminal provider failures (`400/422`, `401/403`): fail the attempt without provider retry and emit operational alerts for configuration/auth classes.
 
 ---
 
@@ -416,6 +422,16 @@ Each idempotency row carries an **`expires_at`** (e.g. 72 hours after creation).
 - Define measurable latency objectives and overload behavior (for example: target percentiles, timeout budgets, and degraded-mode UX thresholds) before locking architecture changes.
 - Define required observability to support this decision, including in-flight request age, timeout rate, retry rate, and queue/backlog indicators where applicable.
 
+### 8.1 Circuit Breaker (Future Improvement, non-V1)
+
+- Introduce a circuit breaker in front of provider calls to fail fast during provider outages.
+- Intended outcomes:
+  - protect backend capacity from long waits/retry storms,
+  - reduce tail latency and request thread blocking,
+  - provide predictable degraded behavior while provider health is poor.
+- Target behavior (future): `closed` (normal calls), `open` (fast-fail provider calls), `half_open` (limited probes to test recovery).
+- Thresholds and tuning are implementation-defined and will be finalized with production telemetry; no V1 commitment in this PRD.
+
 ---
 
 ## 9. Testing Scenarios
@@ -429,9 +445,12 @@ Each idempotency row carries an **`expires_at`** (e.g. 72 hours after creation).
 - 25. UI shows performance using label+color only (numeric score is not displayed)
 - 26. Grade boundary mapping is correct: `19->Needs Improvement`, `20->Below Expectations`, `39->Below Expectations`, `40->Developing`, `59->Developing`, `60->Good`, `79->Good`, `80->Strong`, `100->Strong`
 - 27. If score/grade derivation fails, backend returns `500` and does not persist a partial `PracticeFeedback` row
+- 28. Provider `429` is treated as transient: backend performs bounded retry and honors provider `Retry-After` when available
+- 29. Provider `400/422` is terminal: no provider retry, request is marked failed
+- 30. Provider `401/403` is terminal: no provider retry, request is marked failed and operational alert is emitted
 
 **Edge Cases:**
-- 28. Very long feedback text → Scrollable, properly formatted
+- 31. Very long feedback text → Scrollable, properly formatted
 
 ---
 

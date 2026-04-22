@@ -159,6 +159,35 @@ Implemented in **`FeedbackIdempotencyCoordinator`**:
 
 **Transactions:** Claim insert and finalize/fail updates use `@Transactional` on coordinator methods; LLM call is **not** wrapped with those transactions.
 
+### 5.2 Failure taxonomy and retry ownership contract
+
+**Retry ownership (V1 synchronous):**
+
+- Backend is the primary retry owner for transient provider failures.
+- Retry budget is bounded to avoid amplification and long-tail latency; target contract is **2 provider attempts total per submit intent**.
+- Client retries are only for transport/API uncertainty and must reuse the same `Idempotency-Key`.
+
+**Failure classification matrix:**
+
+| Provider/transport outcome | Class | Server retries provider call? | Idempotency request status | API behavior |
+|---------------------------|-------|-------------------------------|----------------------------|--------------|
+| Network timeout / connect reset | Transient | Yes (within bounded budget) | Keep `CLAIMED` during retries; `FAILED` if budget exhausted | `503` `llm_timeout` (or equivalent transient code) after exhaustion |
+| Provider `5xx` | Transient | Yes (within bounded budget) | Keep `CLAIMED` during retries; `FAILED` if budget exhausted | `503` temporary unavailable after exhaustion |
+| Provider `429` | Transient throttling | Yes (within bounded budget) | Keep `CLAIMED` during retries; `FAILED` if budget exhausted | `503` temporary unavailable; include `Retry-After` when available |
+| Provider `400/422` | Terminal request/prompt | No | Transition to `FAILED` immediately | Return non-retriable failure (mapped via existing error envelope) |
+| Provider `401/403` | Terminal auth/config | No | Transition to `FAILED` immediately | Return non-retriable failure; emit operational alert |
+
+**Backoff and timeout envelope:**
+
+- Retry delay uses exponential backoff with jitter.
+- If provider returns `Retry-After` (notably for `429`), backend should honor it when compatible with end-to-end API timeout budget.
+- If honoring provider `Retry-After` would violate API timeout budget, fail the current attempt and rely on client retry with the same idempotency key.
+
+**`Retry-After` propagation:**
+
+- For `feedback_in_progress`, always return `Retry-After` guidance.
+- For transient provider exhaustion (especially `429`), include `Retry-After` when a reasonable server-computed wait is available.
+
 ---
 
 ## 6. Grading and response mapping
@@ -191,6 +220,14 @@ When an active session is completed ([`PracticeMainService.archiveAndDeleteActiv
 | [`StubLlmFeedbackClient`](../../../src/main/java/com/hellointerview/backend/service/feedback/StubLlmFeedbackClient.java) | `@Primary` Phase 1 bean: deterministic stub text + score **85.5**. |
 | **Future** | Swap in a provider client bean; keep timeout → `LlmTimeoutException` → `markRequestFailed(..., "llm_timeout")` + **503** `llm_timeout`. |
 
+### 8.1 Future: circuit breaker integration (non-V1)
+
+- Circuit breaker is a future reliability enhancement, not a Phase 1 requirement.
+- Intended integration point: wrap provider calls inside `LlmFeedbackClient` implementation.
+- State model (future): `closed` (normal calls), `open` (fail fast without provider call), `half_open` (limited probes to test provider recovery).
+- While breaker is `open`, backend should fail fast with a stable temporary-unavailable response and keep idempotency semantics intact (`FAILED` for attempted submit, same-key retry allowed after cooldown).
+- Thresholds (error rate, consecutive failures, cooldown/probe sizing) are implementation-defined and should be finalized using production telemetry.
+
 ---
 
 ## 9. Operational and testing notes
@@ -198,6 +235,7 @@ When an active session is completed ([`PracticeMainService.archiveAndDeleteActiv
 - **Service tests:** [`PracticeFeedbackServiceTest`](../../../src/test/java/com/hellointerview/backend/service/PracticeFeedbackServiceTest.java) — claim replay, proceed/finalize, conflict, in-progress, LLM timeout + failed row, grade mapping failure + `markRequestFailed`, validation paths; [`PracticeMainServiceTest`](../../../src/test/java/com/hellointerview/backend/service/PracticeMainServiceTest.java) — session complete archives `PracticeFeedback` to history; [`FeedbackGradeMapperTest`](../../../src/test/java/com/hellointerview/backend/service/feedback/FeedbackGradeMapperTest.java).
 - **Controller tests:** [`PracticesControllerTest`](../../../src/test/java/com/hellointerview/backend/controller/PracticesControllerTest.java) — body rules, required header, happy path wiring with `GlobalExceptionHandler`.
 - **Local JDK 25 + Mockito:** Surefire sets **`-Dnet.bytebuddy.experimental=true`** ([`pom.xml`](../../../pom.xml)) so inline mocks work; document for maintainers running `mvn test`.
+- **Reliability tests to add/keep:** provider `429` retry path, provider `400/422` terminal no-retry path, provider `401/403` terminal + alert path, bounded retry exhaustion path with correct idempotency status.
 
 ---
 
