@@ -19,7 +19,7 @@ The AI Feedback System enables users to receive AI-generated evaluation and feed
 2. Resolves canonical persisted practice state from the backend (`PracticeMain.whiteboard_content` + transcript segments for `practice_id`)
 3. Transforms persisted diagram JSON to structured text for LLM consumption
 4. Constructs an evaluation prompt with question context, diagram description, and combined spoken transcript
-5. Sends the prompt to an LLM API (OpenAI/Anthropic)
+5. Sends the prompt to an LLM API (profile-specific provider: local profile uses Ollama, dev profile uses Gemini)
 6. Parses and stores the feedback
 7. Returns feedback to the frontend for display
 
@@ -91,7 +91,7 @@ Request Body:
    - Diagram description
    - Combined spoken transcript (server-derived from persisted transcript segments—see **§2.6**)
    - Evaluation criteria
-6. Send to LLM API (OpenAI/Anthropic)
+6. Send to LLM API (profile-specific provider: local profile uses Ollama, dev profile uses Gemini)
 7. Parse and store feedback
 8. Return to frontend
 
@@ -353,7 +353,9 @@ Each idempotency row carries an **`expires_at`** (e.g. 72 hours after creation).
 ## 5. AI Integration
 
 **LLM Service:**
-- Provider: OpenAI GPT-4 or Anthropic Claude 3
+- Provider mapping by profile:
+  - local profile: Ollama (default provider for local development)
+  - dev profile: Gemini
 - Timeout: 60 seconds per provider call
 - Retry ownership (V1 synchronous): server-owned primary retries for transient provider failures
 - Retry policy: maximum 2 provider attempts total per submit intent, with exponential backoff and jitter
@@ -398,7 +400,7 @@ Each idempotency row carries an **`expires_at`** (e.g. 72 hours after creation).
 
 ## 7. Open Questions (AI Service)
 
-1. **AI Service Selection:** OpenAI GPT-4 vs Anthropic Claude 3? Cost-benefit analysis needed.
+1. **Gemini in dev profile:** Which Gemini model tier should dev use by default (for example speed-first vs quality-first)?
 2. **Speech Transcript Quality:** Is browser speech recognition accuracy sufficient for all supported browsers in V1?
 3. **Feedback Scoring evolution:** Should future versions expose numeric score in UI, or keep label+color-only permanently?
 

@@ -74,7 +74,7 @@ This directory contains the modular Product Requirements Documents (PRDs) for th
 **Key Features:**
 - Practice submission validation
 - Diagram-to-text transformation
-- LLM integration (OpenAI GPT-4 / Anthropic Claude 3)
+- LLM integration (profile-based: local profile uses Ollama, dev profile uses Gemini)
 - Transcript-based spoken explanation input
 - Feedback scoring and display
 - Edit and resubmit workflow

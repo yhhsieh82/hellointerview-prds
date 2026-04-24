@@ -403,7 +403,9 @@ Authorization: Bearer {jwt_token}
 
 ### 6.7 AI Integration
 **LLM Service:**
-- Provider: OpenAI GPT-4 or Anthropic Claude 3
+- Provider mapping by profile:
+  - local profile: Ollama (default for local development)
+  - dev profile: Gemini
 - Timeout: 60 seconds
 - Retry: 2 attempts with exponential backoff
 - Fallback: Queue for later processing if service unavailable
@@ -445,10 +447,10 @@ Authorization: Bearer {jwt_token}
 **Additional Dependencies:** Lombok (code generation)
 
 ### 7.3 AI Integration
-**LLM Service:** OpenAI GPT-4 or Anthropic Claude 3 Opus
+**LLM Service:** Profile-based provider contract (`ollama` for local profile, `Gemini` for dev profile)
 **Frontend Speech Capture:** Browser-native speech recognition or equivalent provider
 **Libraries:** 
-- Java: OpenAI Java SDK, HTTP clients (RestTemplate/WebClient) for API integration
+- Java: HTTP clients (RestTemplate/WebClient) for provider API integration (Ollama local, Gemini dev)
 
 ### 7.4 Infrastructure
 **Hosting:** AWS, GCP, or Azure
@@ -583,7 +585,7 @@ Authorization: Bearer {jwt_token}
 ### 11.1 Dependencies
 - User authentication system (existing or to be built)
 - AWS/GCP/Azure account with appropriate permissions
-- OpenAI or Anthropic API access and budget
+- LLM provider access and budget (Gemini for dev profile; local profile may run Ollama without external API spend)
 - PostgreSQL database provisioning
 - Content team to create initial QuestionMains
 

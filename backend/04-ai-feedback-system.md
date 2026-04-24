@@ -19,7 +19,7 @@ This document is the **backend engineering specification** for AI feedback submi
 
 ### 1.2 Out of scope / deferred
 
-- Real OpenAI/Anthropic HTTP client (Phase 1 uses **`StubLlmFeedbackClient`** as `@Primary` implementation of **`LlmFeedbackClient`**).
+- Non-local provider implementation parity details beyond the profile contract in §8 (Phase 1 keeps **`StubLlmFeedbackClient`** available as a fallback implementation of **`LlmFeedbackClient`**).
 - Async queue-only completion if the product later defers synchronous HTTP response (current design completes in-request after claim).
 - Dedicated UI work for numeric score (product: V1 uses label + color only).
 
@@ -212,13 +212,33 @@ When an active session is completed ([`PracticeMainService.archiveAndDeleteActiv
 
 ---
 
-## 8. LLM integration (Phase 1 vs future)
+## 8. LLM integration (profile-based provider contract)
 
 | Piece | Role |
 |--------|------|
 | [`LlmFeedbackClient`](../../../src/main/java/com/hellointerview/backend/service/feedback/LlmFeedbackClient.java) | Interface: `generate(LlmFeedbackInput)` may throw **`LlmTimeoutException`**. |
-| [`StubLlmFeedbackClient`](../../../src/main/java/com/hellointerview/backend/service/feedback/StubLlmFeedbackClient.java) | `@Primary` Phase 1 bean: deterministic stub text + score **85.5**. |
-| **Future** | Swap in a provider client bean; keep timeout → `LlmTimeoutException` → `markRequestFailed(..., "llm_timeout")` + **503** `llm_timeout`. |
+| [`StubLlmFeedbackClient`](../../../src/main/java/com/hellointerview/backend/service/feedback/StubLlmFeedbackClient.java) | Fallback bean when `ai.llm.provider=stub` (or unset). |
+| [`OllamaLlmFeedbackClient`](../../../src/main/java/com/hellointerview/backend/service/feedback/OllamaLlmFeedbackClient.java) | Local profile provider when `ai.llm.provider=ollama`; posts to `/api/generate`, enforces JSON response contract (`feedback_text`, `score`), and applies bounded retries for transient failures. |
+| Gemini provider client (dev profile) | Dev profile provider when `ai.llm.provider=gemini`; calls Gemini API and enforces the same JSON response contract (`feedback_text`, `score`) and bounded retry behavior. |
+| [`OllamaLlmProperties`](../../../src/main/java/com/hellointerview/backend/service/feedback/OllamaLlmProperties.java) | Typed config for base URL, model, timeout, retry count, and backoff/jitter. |
+
+### 8.0 Provider selection and environment contract
+
+- `ai.llm.provider` selects implementation (`stub`, `ollama`, or `gemini`).
+- Environment/profile mapping:
+  - local profile default provider: `ollama`
+  - dev profile provider: `gemini`
+- `ai.llm.ollama.*` config controls runtime behavior:
+  - `base-url`, `model`
+  - `connect-timeout`, `read-timeout`
+  - `max-attempts` (default 2)
+  - `initial-backoff`, `backoff-multiplier`, `max-jitter-millis`
+- `ai.llm.gemini.*` config controls dev-profile runtime behavior (for example API endpoint/key, model, timeouts, and retry/backoff settings).
+- Timeout outcomes are still mapped to `LlmTimeoutException` and handled as `llm_timeout`.
+- Non-timeout provider failures (including Ollama and Gemini) are classified as:
+  - transient: `llm_transient_failure` (503)
+  - terminal: `llm_terminal_failure` (500)
+- Both failure classes are marked `FAILED` in `practice_feedback_request` before HTTP response is returned.
 
 ### 8.1 Future: circuit breaker integration (non-V1)
 
