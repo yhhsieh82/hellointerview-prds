@@ -250,7 +250,122 @@ When an active session is completed ([`PracticeMainService.archiveAndDeleteActiv
 
 ---
 
-## 9. Operational and testing notes
+## 9. LLM provider observability (Phase 1)
+
+This section defines provider-path observability for `LlmFeedbackClient` implementations (`ollama`, `gemini`) so operators can distinguish provider degradation, retry behavior, and local service bottlenecks while preserving idempotency and API error semantics from §5.2 and §8.
+
+### 9.1 Problem analysis
+
+- User-visible promise: feedback submit remains within product latency targets and fails predictably when provider conditions are poor.
+- Pressure shape: burst submits, provider tail latency, and transient provider throttling (`429`) can increase in-flight request age.
+- Failure to prevent: high timeout/error rate without clear cause, retries that inflate latency/cost but do not improve success rate, and inability to separate provider issues from local API issues.
+
+### 9.2 Service objective model (provider path)
+
+- **SLA (external):** governed by API contract in §4.
+- **SLO (internal):**
+  - Provider-path latency remains inside configured timeout envelope under normal load (`llm_provider_call_latency_ms`, p95).
+  - Provider success ratio remains above environment-specific target (`llm_provider_success_rate`).
+  - Retry exhaustion ratio remains below environment-specific threshold (`llm_provider_retry_exhausted_rate`).
+- **SLI observation points:**
+  - before provider call attempt,
+  - after provider response and failure classification,
+  - after retry loop terminates.
+- **Indicator classes:**
+  - hard reliability signals: timeout rate, retry exhaustion rate, terminal provider failure rate,
+  - early warning signals: `429` rate, p99 latency drift, in-flight provider calls.
+
+### 9.3 Metrics contract
+
+Emit application metrics from provider client implementations and the shared retry abstraction, with consistent tags: `provider`, `model`, `attempt`, `outcome`, `failure_class`.
+
+Core metrics:
+
+- `llm_provider_calls_total` (counter)
+  - tags: `provider`, `model`, `outcome=success|failure`
+- `llm_provider_call_latency_ms` (histogram)
+  - tags: `provider`, `model`, `attempt`, `outcome`
+- `llm_provider_failures_total` (counter)
+  - tags: `provider`, `model`, `failure_class=timeout|transient|transient_throttle|terminal_request|terminal_auth_config|network|parse`
+- `llm_provider_http_status_total` (counter)
+  - tags: `provider`, `model`, `http_status_group=2xx|4xx|5xx`, `status_code`
+- `llm_provider_retry_attempts_total` (counter)
+  - tags: `provider`, `model`, `trigger=timeout|5xx|429|network`
+- `llm_provider_retry_outcome_total` (counter)
+  - tags: `provider`, `model`, `outcome=success_after_retry|exhausted`
+- `llm_provider_inflight_calls` (gauge)
+  - tags: `provider`, `model`
+- `llm_provider_retry_after_seconds` (histogram, optional when provider header is present)
+  - tags: `provider`, `model`
+
+Derived dashboard ratios:
+
+- provider success rate,
+- timeout rate,
+- transient vs terminal failure ratio,
+- retry success-after-retry ratio,
+- retry exhaustion ratio,
+- tail amplification ratio (`p99/p50`).
+
+### 9.4 Failure profiling alignment with §5.2 taxonomy
+
+Map each provider outcome into one canonical class for metrics and logs:
+
+- timeout/connect reset -> `timeout` or `network` (transient),
+- provider `5xx` -> `transient`,
+- provider `429` -> `transient_throttle`,
+- provider `400/422` -> `terminal_request`,
+- provider `401/403` -> `terminal_auth_config`.
+
+Operational rule: every failed provider attempt increments class-specific counters before retry/final response decisions.
+
+### 9.5 Dashboard minimum set
+
+- Provider overview: calls, success rate, and failure-class split by provider/model.
+- Latency panel: p50/p95/p99 plus `attempt=1` vs `attempt>1` comparison.
+- Retry health: retries triggered, success-after-retry, exhausted count.
+- Throttling panel: `429` count and optional `Retry-After` distribution.
+- In-flight pressure: `llm_provider_inflight_calls` trend with latency/timeout overlays.
+
+### 9.6 Alert policy (actionable)
+
+- Warning: provider p95 latency above threshold for 10 minutes (per provider/model).
+- Critical: timeout rate above incident threshold for 5 minutes.
+- Critical: `terminal_auth_config` failures (`401/403`) sustained for 3 minutes.
+- Warning: retry exhaustion ratio above threshold for 10 minutes.
+- Warning: `429` spike sustained for 10 minutes.
+
+Each alert maps to runbook actions:
+
+- reduce retry pressure or adjust timeout envelope,
+- rotate/fix provider credentials/configuration,
+- switch provider/model where configuration supports fallback,
+- apply temporary traffic controls when overload is provider-driven.
+
+### 9.7 Logging and tracing correlation
+
+- Structured logs per provider attempt include: `practice_feedback_request_id`, `idempotency_key_hash`, `provider`, `model`, `attempt`, `failure_class`, `http_status`, `latency_ms`.
+- Traces include parent span for feedback submit and child span per provider attempt (`llm.provider.call`).
+- Metrics labels and log fields must share the same class vocabulary (`failure_class`, `outcome`) to reduce incident triage time.
+
+### 9.8 POC validation (before broad rollout)
+
+Run controlled load scenarios to validate both retry behavior and observability usefulness:
+
+- steady baseline,
+- transient `5xx` bursts,
+- throttling (`429`) bursts,
+- slow-provider tail latency.
+
+Success criteria:
+
+- dashboards separate transient vs terminal conditions clearly,
+- alerts fire with low noise and map to clear operator actions,
+- retry success and exhaustion metrics match expected behavior from §5.2.
+
+---
+
+## 10. Operational and testing notes
 
 - **Service tests:** [`PracticeFeedbackServiceTest`](../../../src/test/java/com/hellointerview/backend/service/PracticeFeedbackServiceTest.java) — claim replay, proceed/finalize, conflict, in-progress, LLM timeout + failed row, grade mapping failure + `markRequestFailed`, validation paths; [`PracticeMainServiceTest`](../../../src/test/java/com/hellointerview/backend/service/PracticeMainServiceTest.java) — session complete archives `PracticeFeedback` to history; [`FeedbackGradeMapperTest`](../../../src/test/java/com/hellointerview/backend/service/feedback/FeedbackGradeMapperTest.java).
 - **Controller tests:** [`PracticesControllerTest`](../../../src/test/java/com/hellointerview/backend/controller/PracticesControllerTest.java) — body rules, required header, happy path wiring with `GlobalExceptionHandler`.
@@ -259,6 +374,6 @@ When an active session is completed ([`PracticeMainService.archiveAndDeleteActiv
 
 ---
 
-## 10. Cross-link maintenance
+## 11. Cross-link maintenance
 
-When changing feedback HTTP contract or idempotency rules, update **this file** and the product PRD [**§4**](../04-ai-feedback-system.md) together. Related backend docs: [01](01-practice-session-management.md), [03](03-audio-recording.md).
+When changing feedback HTTP contract, idempotency rules, or provider retry/failure behavior, update **this file** and the product PRD [**§4**](../04-ai-feedback-system.md) together. Related backend docs: [01](01-practice-session-management.md), [03](03-audio-recording.md).
