@@ -263,10 +263,12 @@ This section defines provider-path observability for `LlmFeedbackClient` impleme
 ### 9.2 Service objective model (provider path)
 
 - **SLA (external):** governed by API contract in §4.
-- **SLO (internal):**
-  - Provider-path latency remains inside configured timeout envelope under normal load (`llm_provider_call_latency_ms`, p95).
-  - Provider success ratio remains above environment-specific target (`llm_provider_success_rate`).
-  - Retry exhaustion ratio remains below environment-specific threshold (`llm_provider_retry_exhausted_rate`).
+- **SLO ownership:** Backend team owns provider-path SLO targets and incident acceptance decisions.
+- **SLO (internal, production):**
+  - Provider-path latency: `llm_provider_call_latency_ms` p95 <= 8s and p99 <= 20s over 10-minute windows.
+  - Provider success ratio: `llm_provider_success_rate` >= 99.0% over 30-minute windows.
+  - Retry exhaustion ratio: `llm_provider_retry_exhausted_rate` <= 1.0% over 30-minute windows.
+- **Non-production environments:** dev/local are best-effort for observability signal quality and are not SLO-governed.
 - **SLI observation points:**
   - before provider call attempt,
   - after provider response and failure classification,
@@ -278,6 +280,16 @@ This section defines provider-path observability for `LlmFeedbackClient` impleme
 ### 9.3 Metrics contract
 
 Emit application metrics from provider client implementations and the shared retry abstraction, with consistent tags: `provider`, `model`, `attempt`, `outcome`, `failure_class`.
+
+Canonical `failure_class` vocabulary is fixed for metrics/logs/traces:
+
+- `timeout`
+- `transient`
+- `transient_throttle`
+- `terminal_request`
+- `terminal_auth_config`
+- `network`
+- `parse`
 
 Core metrics:
 
@@ -329,18 +341,18 @@ Operational rule: every failed provider attempt increments class-specific counte
 
 ### 9.6 Alert policy (actionable)
 
-- Warning: provider p95 latency above threshold for 10 minutes (per provider/model).
-- Critical: timeout rate above incident threshold for 5 minutes.
+- Warning: provider p95 latency > 8s for 10 minutes (per provider/model).
+- Critical: provider timeout rate > 2% for 5 minutes.
 - Critical: `terminal_auth_config` failures (`401/403`) sustained for 3 minutes.
-- Warning: retry exhaustion ratio above threshold for 10 minutes.
-- Warning: `429` spike sustained for 10 minutes.
+- Warning: retry exhaustion ratio > 1% for 10 minutes.
+- Warning: provider `429` rate > 3% for 10 minutes.
+
+Runbook owner: Backend on-call is primary owner for all provider-path alert actions.
 
 Each alert maps to runbook actions:
 
-- reduce retry pressure or adjust timeout envelope,
-- rotate/fix provider credentials/configuration,
-- switch provider/model where configuration supports fallback,
-- apply temporary traffic controls when overload is provider-driven.
+- latency/timeout/retry exhaustion/`429`: tune retry and timeout envelope, apply temporary traffic controls, and switch provider/model where fallback is configured.
+- `terminal_auth_config`: rotate provider credentials immediately and fix auth/configuration before re-enabling normal traffic policy.
 
 ### 9.7 Logging and tracing correlation
 
